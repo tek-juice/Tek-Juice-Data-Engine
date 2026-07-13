@@ -1,0 +1,48 @@
+# DATA ENGINE — Generic Service Dockerfile
+# Build arg SERVICE selects which service to run.
+# Usage: docker build --build-arg SERVICE=ingestion_service .
+ARG SERVICE=ingestion_service
+
+FROM python:3.11-slim AS base
+
+ARG SERVICE
+ENV SERVICE=${SERVICE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    libmagic1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Copy shared modules and the target service
+COPY configs/ ./configs/
+COPY shared/ ./shared/
+COPY services/${SERVICE}/ ./services/${SERVICE}/
+
+# Storage directories
+RUN mkdir -p storage/uploads storage/processed storage/vectors storage/exports storage/logs
+
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && chown -R appuser:appgroup /app/storage
+USER appuser
+
+ENV PYTHONPATH=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:${SERVICE_PORT:-8001}/health || exit 1
+
+# Entrypoint: run the service's main.py via uvicorn
+CMD uvicorn services.${SERVICE}.main:app \
+    --host 0.0.0.0 \
+    --port ${SERVICE_PORT:-8001} \
+    --workers 2 \
+    --loop uvloop

@@ -1,0 +1,121 @@
+{
+  "__inputs": [],
+  "__requires": [{"type": "grafana", "id": "grafana", "name": "Grafana", "version": "11.0.0"}],
+  "annotations": {"list": []},
+  "description": "DATA ENGINE — System Overview Dashboard",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Documents Completed (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "targets": [{
+        "expr": "sum(increase(data_engine_documents_ingested_total{status='completed'}[24h]))",
+        "legendFormat": "Completed"
+      }],
+      "options": {"colorMode": "background", "graphMode": "area"}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Embeddings Generated (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "targets": [{
+        "expr": "sum(increase(data_engine_embeddings_generated_total[24h]))",
+        "legendFormat": "Embeddings"
+      }],
+      "options": {"colorMode": "background", "graphMode": "area"}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Search Requests (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "targets": [{
+        "expr": "sum(increase(data_engine_search_requests_total[24h]))",
+        "legendFormat": "Searches"
+      }],
+      "options": {"colorMode": "background", "graphMode": "area"}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Error Rate",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "targets": [{
+        "expr": "sum(rate(data_engine_http_requests_total{status=~'5..'}[5m])) / sum(rate(data_engine_http_requests_total[5m])) * 100",
+        "legendFormat": "Error %"
+      }],
+      "options": {
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 1},
+            {"color": "red", "value": 5}
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Request Rate by Service",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+      "targets": [{
+        "expr": "sum(rate(data_engine_http_requests_total[5m])) by (job)",
+        "legendFormat": "{{job}}"
+      }],
+      "options": {"legend": {"displayMode": "table", "placement": "right"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "p95 Response Time by Service",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(data_engine_http_request_duration_seconds_bucket[5m])) by (job, le))",
+        "legendFormat": "{{job}} p95"
+      }],
+      "fieldConfig": {
+        "defaults": {"unit": "s"}
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Embedding Generation Rate",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [{
+        "expr": "sum(rate(data_engine_embeddings_generated_total[5m])) by (provider)",
+        "legendFormat": "{{provider}}"
+      }]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Vector Search Latency (p50 / p95 / p99)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(data_engine_search_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, rate(data_engine_search_latency_seconds_bucket[5m]))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, rate(data_engine_search_latency_seconds_bucket[5m]))", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["data-engine", "overview"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "DATA ENGINE — System Overview",
+  "uid": "data-engine-overview",
+  "version": 1
+}

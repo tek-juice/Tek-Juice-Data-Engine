@@ -1,0 +1,74 @@
+# DATA ENGINE — GitHub Actions Deploy Pipeline
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [staging, production]
+        default: staging
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.event.inputs.environment || 'production' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.30.0"
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name data-engine-cluster \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Run database migrations
+        run: |
+          kubectl exec -n data-engine \
+            $(kubectl get pod -n data-engine -l app=api-gateway -o jsonpath='{.items[0].metadata.name}') \
+            -- alembic upgrade head
+
+      - name: Deploy services
+        run: |
+          kubectl apply -f infrastructure/kubernetes/ -n data-engine
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/api-gateway -n data-engine --timeout=300s
+          kubectl rollout status deployment/ingestion-service -n data-engine --timeout=300s
+          kubectl rollout status deployment/embedding-service -n data-engine --timeout=300s
+          kubectl rollout status deployment/vector-vault -n data-engine --timeout=300s
+
+      - name: Run smoke tests
+        run: |
+          GATEWAY_URL=$(kubectl get svc api-gateway -n data-engine -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          curl -f http://${GATEWAY_URL}/health || exit 1
+
+      - name: Notify on success
+        if: success()
+        run: echo "Deployment to ${{ github.event.inputs.environment || 'production' }} succeeded"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/api-gateway -n data-engine
+          kubectl rollout undo deployment/ingestion-service -n data-engine

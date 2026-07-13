@@ -1,0 +1,37 @@
+# DATA ENGINE — Celery Worker Dockerfile
+FROM python:3.11-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    libmagic1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY configs/ ./configs/
+COPY shared/ ./shared/
+COPY services/ ./services/
+COPY workers/ ./workers/
+
+RUN mkdir -p storage/uploads storage/processed storage/vectors storage/exports storage/logs
+
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && chown -R appuser:appgroup /app/storage
+USER appuser
+
+ENV PYTHONPATH=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    C_FORCE_ROOT=false
+
+# Default: run as general worker — overridden per service in docker-compose
+CMD ["celery", "-A", "workers.celery.app", "worker", \
+     "--loglevel=info", \
+     "--concurrency=4", \
+     "--queues=default,embeddings,ingestion,telemetry"]

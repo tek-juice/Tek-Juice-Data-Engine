@@ -1,0 +1,86 @@
+global:
+  resolve_timeout: 5m
+  smtp_from: "alerts@data-engine.internal"
+  smtp_smarthost: "smtp.example.com:587"
+  smtp_auth_username: "alerts@data-engine.internal"
+  smtp_auth_password: "CHANGE_ME_SMTP_PASSWORD"
+
+templates:
+  - "/etc/alertmanager/templates/*.tmpl"
+
+route:
+  receiver: "default-receiver"
+  group_by: ["alertname", "severity", "job"]
+  group_wait:      30s
+  group_interval:  5m
+  repeat_interval: 4h
+
+  routes:
+    # Critical alerts — notify immediately via all channels
+    - match:
+        severity: critical
+      receiver: critical-receiver
+      group_wait: 0s
+      repeat_interval: 1h
+      continue: true
+
+    # Warning alerts — notify via Slack only
+    - match:
+        severity: warning
+      receiver: warning-receiver
+      repeat_interval: 4h
+
+    # Database-specific alerts
+    - match_re:
+        alertname: "Database.*|Postgres.*|Replication.*"
+      receiver: database-receiver
+
+receivers:
+  - name: "default-receiver"
+    slack_configs:
+      - api_url: "https://hooks.slack.com/services/CHANGE_ME"
+        channel:  "#data-engine-alerts"
+        title:    "DATA ENGINE — {{ .GroupLabels.alertname }}"
+        text:     "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
+        send_resolved: true
+
+  - name: "critical-receiver"
+    pagerduty_configs:
+      - routing_key: "CHANGE_ME_PAGERDUTY_KEY"
+        description: "{{ .GroupLabels.alertname }} — {{ .CommonAnnotations.summary }}"
+    email_configs:
+      - to: "oncall@example.com"
+        subject: "[CRITICAL] DATA ENGINE: {{ .GroupLabels.alertname }}"
+        html: |
+          <h2>Critical Alert</h2>
+          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+          {{ range .Alerts }}
+          <p>{{ .Annotations.description }}</p>
+          {{ end }}
+
+  - name: "warning-receiver"
+    slack_configs:
+      - api_url: "https://hooks.slack.com/services/CHANGE_ME"
+        channel:  "#data-engine-warnings"
+        title:    "[WARNING] {{ .GroupLabels.alertname }}"
+        text:     "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
+        send_resolved: true
+
+  - name: "database-receiver"
+    slack_configs:
+      - api_url: "https://hooks.slack.com/services/CHANGE_ME"
+        channel:  "#data-engine-db"
+        title:    "[DB] {{ .GroupLabels.alertname }}"
+        text:     "{{ range .Alerts }}{{ .Annotations.description }}\n{{ end }}"
+        send_resolved: true
+    email_configs:
+      - to: "dba@example.com"
+        subject: "[DB ALERT] DATA ENGINE: {{ .GroupLabels.alertname }}"
+
+inhibit_rules:
+  # Suppress warnings if a critical alert is already firing for the same job
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ["job", "instance"]

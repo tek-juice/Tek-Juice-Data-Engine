@@ -1,0 +1,187 @@
+groups:
+
+  # ── Service Availability ──────────────────────
+  - name: service_availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has been unreachable for >1 minute."
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(data_engine_http_requests_total{status=~"5.."}[5m])) by (job)
+          /
+          sum(rate(data_engine_http_requests_total[5m])) by (job)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Error rate exceeds 5% for {{ $labels.job }} over the last 5 minutes."
+
+  # ── Latency ───────────────────────────────────
+  - name: latency
+    rules:
+      - alert: HighResponseLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(data_engine_http_request_duration_seconds_bucket[5m])) by (job, le)
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 latency > 2s on {{ $labels.job }}"
+          description: "p99 response time is {{ $value | humanizeDuration }} for {{ $labels.job }}."
+
+      - alert: VectorSearchLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(data_engine_search_latency_seconds_bucket[5m])) by (le)
+          ) > 1.0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vector search p95 latency > 1s"
+          description: "Vector search is responding slowly — check HNSW index health."
+
+  # ── Embedding Pipeline ────────────────────────
+  - name: embedding_pipeline
+    rules:
+      - alert: EmbeddingProviderFailure
+        expr: |
+          sum(rate(data_engine_embedding_errors_total[10m])) by (provider) > 0
+          and
+          sum(rate(data_engine_embeddings_generated_total[10m])) by (provider) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Embedding provider {{ $labels.provider }} is failing"
+          description: "All embedding requests to {{ $labels.provider }} are failing. Fallback may be active."
+
+      - alert: EmbeddingLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            rate(data_engine_embedding_latency_seconds_bucket[5m])
+          ) > 5.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Embedding generation p95 latency > 5s"
+          description: "Embedding provider response time is degraded."
+
+  # ── Database ──────────────────────────────────
+  - name: database
+    rules:
+      - alert: DatabaseConnectionPoolHigh
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connection pool utilisation > 85%"
+          description: "Database pool at {{ $value | humanizePercentage }}. Consider increasing pool size."
+
+      - alert: DatabaseDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is unreachable"
+          description: "The database node has been unreachable for >1 minute. All operations will fail."
+
+      - alert: ReplicationLagHigh
+        expr: pg_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL replication lag > 30s"
+          description: "Read replica is {{ $value }}s behind primary."
+
+  # ── Redis ─────────────────────────────────────
+  - name: redis
+    rules:
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is unreachable"
+          description: "Redis cache/broker has been unreachable for >1 minute. Celery workers will stop."
+
+      - alert: RedisQueueDepthHigh
+        expr: redis_list_length{key="data_engine:telemetry:events"} > 8000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Telemetry queue depth > 8000"
+          description: "Event queue may be backing up — check telemetry workers."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage > 80%"
+          description: "Redis is using {{ $value | humanizePercentage }} of available memory."
+
+  # ── Storage ───────────────────────────────────
+  - name: storage
+    rules:
+      - alert: DiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/"} /
+          node_filesystem_size_bytes{mountpoint="/"} < 0.20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space < 20% on {{ $labels.instance }}"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining."
+
+      - alert: VectorStorageCritical
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/vectors"} /
+          node_filesystem_size_bytes{mountpoint="/vectors"} < 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Vector storage critically low (<10%)"
+          description: "Vector storage partition is nearly full — new embeddings will fail."
+
+  # ── Telemetry Workers ─────────────────────────
+  - name: telemetry_workers
+    rules:
+      - alert: TelemetryWorkerSilent
+        expr: |
+          time() - max(data_engine_telemetry_events_total) > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No telemetry events for >10 minutes"
+          description: "Telemetry workers may have stopped. Check the telemetry service."
+
+      - alert: CeleryWorkerDown
+        expr: flower_workers_total == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Celery workers active"
+          description: "All Celery workers are offline. Document processing pipeline has stopped."

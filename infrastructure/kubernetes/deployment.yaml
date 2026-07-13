@@ -1,0 +1,213 @@
+# DATA ENGINE — Kubernetes Deployments
+# Apply with: kubectl apply -f infrastructure/kubernetes/deployment.yaml -n data-engine
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: data-engine
+  labels:
+    app: api-gateway
+    tier: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: registry/data-engine/api-gateway:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: data-engine-secrets
+            - configMapRef:
+                name: data-engine-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-service
+  namespace: data-engine
+  labels:
+    app: ingestion-service
+    tier: service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ingestion-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-service
+    spec:
+      containers:
+        - name: ingestion-service
+          image: registry/data-engine/ingestion-service:latest
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - secretRef:
+                name: data-engine-secrets
+            - configMapRef:
+                name: data-engine-config
+          env:
+            - name: SERVICE_PORT
+              value: "8001"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "800m"
+              memory: "1Gi"
+          volumeMounts:
+            - name: uploads-storage
+              mountPath: /app/storage/uploads
+      volumes:
+        - name: uploads-storage
+          persistentVolumeClaim:
+            claimName: uploads-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embedding-service
+  namespace: data-engine
+  labels:
+    app: embedding-service
+    tier: service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: embedding-service
+  template:
+    metadata:
+      labels:
+        app: embedding-service
+    spec:
+      containers:
+        - name: embedding-service
+          image: registry/data-engine/embedding-service:latest
+          ports:
+            - containerPort: 8003
+          envFrom:
+            - secretRef:
+                name: data-engine-secrets
+            - configMapRef:
+                name: data-engine-config
+          env:
+            - name: SERVICE_PORT
+              value: "8003"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vector-vault
+  namespace: data-engine
+  labels:
+    app: vector-vault
+    tier: service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vector-vault
+  template:
+    metadata:
+      labels:
+        app: vector-vault
+    spec:
+      containers:
+        - name: vector-vault
+          image: registry/data-engine/vector-vault:latest
+          ports:
+            - containerPort: 8004
+          envFrom:
+            - secretRef:
+                name: data-engine-secrets
+            - configMapRef:
+                name: data-engine-config
+          env:
+            - name: SERVICE_PORT
+              value: "8004"
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "512Mi"
+            limits:
+              cpu: "1500m"
+              memory: "2Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  namespace: data-engine
+  labels:
+    app: celery-worker
+    tier: worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      containers:
+        - name: celery-worker
+          image: registry/data-engine/worker:latest
+          envFrom:
+            - secretRef:
+                name: data-engine-secrets
+            - configMapRef:
+                name: data-engine-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
