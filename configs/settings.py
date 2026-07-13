@@ -115,6 +115,20 @@ class Settings(BaseSettings):
     bing_search_api_key: str = ""
     scraper_interval_seconds: int = 3600
 
+    # ── Proxy & Anti-blocking
+    proxy_url: str = ""
+    proxy_pool: str = ""
+    scraper_api_key: str = ""
+    scraper_rate_limit_rpm: int = 30
+    scraper_request_delay: float = 2.0
+
+    @property
+    def proxy_list(self) -> list[str]:
+        """Parse comma-separated proxy pool into a list."""
+        if not self.proxy_pool:
+            return [self.proxy_url] if self.proxy_url else []
+        return [p.strip() for p in self.proxy_pool.split(",") if p.strip()]
+
     # ── Social Media Scrapers
     # Reddit (https://www.reddit.com/prefs/apps)
     reddit_client_id: str = ""
