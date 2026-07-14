@@ -126,7 +126,7 @@ async def smart_delay() -> None:
 
 def build_scraperapi_url(target_url: str, country: str = "us") -> str:
     """
-    Route a URL through ScraperAPI for automatic proxy rotation,
+    Route any URL through ScraperAPI for automatic proxy rotation,
     CAPTCHA solving and geo-targeting.
 
     Args:
@@ -148,6 +148,53 @@ def build_scraperapi_url(target_url: str, country: str = "us") -> str:
         f"&country_code={country}"
         f"&render=false"
     )
+
+
+def build_bing_scraperapi_url(query: str, country: str = "us", limit: int = 10) -> str:
+    """
+    Build a ScraperAPI URL that fetches Bing search results directly.
+    No Microsoft Azure account or Bing API key required.
+
+    Uses ScraperAPI's autoparse=true to return clean JSON instead of raw HTML.
+
+    Endpoint format:
+        http://api.scraperapi.com
+          ?api_key=YOUR_KEY
+          &url=https://www.bing.com/search?q=QUERY&count=LIMIT&setlang=en&cc=COUNTRY
+          &autoparse=true
+          &country_code=COUNTRY
+
+    Args:
+        query:   Search query string.
+        country: 2-letter country code (us, gb, ca, au, de, fr, jp, in, br, za, ng, ae, sg).
+        limit:   Number of results to request from Bing (max 50).
+
+    Returns:
+        Full ScraperAPI URL ready to GET, or empty string if no key configured.
+    """
+    if not settings.scraper_api_key:
+        logger.warning("build_bing_scraperapi_url_called_without_key")
+        return ""
+
+    import urllib.parse
+
+    bing_params = urllib.parse.urlencode({
+        "q":       query,
+        "count":   min(limit, 50),
+        "setlang": "en",
+        "cc":      country.upper(),
+        "first":   1,
+    })
+    bing_url = f"https://www.bing.com/search?{bing_params}"
+
+    scraper_params = urllib.parse.urlencode({
+        "api_key":      settings.scraper_api_key,
+        "url":          bing_url,
+        "autoparse":    "true",
+        "country_code": country,
+        "render":       "false",
+    })
+    return f"http://api.scraperapi.com?{scraper_params}"
 
 
 def get_proxy_for_request() -> dict | None:
