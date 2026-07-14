@@ -16,6 +16,7 @@ from services.trend_scraper.utils.anti_block import (
     build_scraperapi_url,
     get_proxy_for_request,
 )
+from services.trend_scraper.utils.headless_browser import SmartScraper
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -102,6 +103,23 @@ class GoogleScraper:
 
         await smart_delay()
         return results
+
+    async def fetch_page_content(self, url: str) -> str:
+        """
+        Fetch full rendered content from a URL using SmartScraper.
+        Automatically uses headless browser for SPAs and Cloudflare-protected pages.
+        Used by the SEO/GEO engine to audit client websites.
+        """
+        scraper = SmartScraper()
+        content = await scraper.fetch(url)
+        logger.info(
+            "page_content_fetched",
+            url=url,
+            js_rendered=content.was_js_rendered,
+            cf_bypassed=content.cloudflare_bypassed,
+            text_length=len(content.text),
+        )
+        return content.text
 
     async def fetch_global(self, query: str, limit: int = 10) -> list[dict]:
         """

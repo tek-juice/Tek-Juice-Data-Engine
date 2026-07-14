@@ -1,7 +1,7 @@
 -- DATA ENGINE — Telemetry & Trend Schema
 -- Phase 2: Tables for telemetry events, scraped trends, gap analysis, schemas
 
--- ── Telemetry Events ──────────────────────────────────────────────────────────
+-- ── Telemetry Events 
 CREATE TABLE IF NOT EXISTS telemetry_events (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID REFERENCES tenants(id) ON DELETE CASCADE,
@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_created_at ON telemetry_events(created_
 -- CREATE TABLE telemetry_events_2025_07 PARTITION OF telemetry_events
 --     FOR VALUES FROM ('2025-07-01') TO ('2025-08-01');
 
--- ── Scraped Trends ────────────────────────────────────────────────────────────
+-- ── Scraped Trends
 CREATE TABLE IF NOT EXISTS scraped_trends (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source          TEXT NOT NULL
@@ -36,7 +36,13 @@ CREATE TABLE IF NOT EXISTS scraped_trends (
     snippet         TEXT,
     published_at    TIMESTAMPTZ,
     raw_content     TEXT,
-    embedding       VECTOR(1536),
+    -- Namespace columns — matches embedding provider used at scrape time
+    embedding_768   VECTOR(768),
+    embedding_1536  VECTOR(1536),
+    embedding_1024  VECTOR(1024),
+    embedding_3072  VECTOR(3072),
+    embedding_model TEXT,           -- tracks which model produced the embedding
+    embedding_dims  INTEGER,
     relevance_score FLOAT,
     metadata        JSONB NOT NULL DEFAULT '{}',
     scraped_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -44,11 +50,10 @@ CREATE TABLE IF NOT EXISTS scraped_trends (
 
 CREATE INDEX IF NOT EXISTS idx_trends_source     ON scraped_trends(source);
 CREATE INDEX IF NOT EXISTS idx_trends_scraped_at ON scraped_trends(scraped_at DESC);
-CREATE INDEX IF NOT EXISTS idx_trends_hnsw       ON scraped_trends
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
+CREATE INDEX IF NOT EXISTS idx_trends_hnsw_768   ON scraped_trends USING hnsw (embedding_768  vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_768  IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_trends_hnsw_1536  ON scraped_trends USING hnsw (embedding_1536 vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_1536 IS NOT NULL;
 
--- ── Gap Analysis Results ──────────────────────────────────────────────────────
+-- ── Gap Analysis Results 
 CREATE TABLE IF NOT EXISTS gap_analysis_results (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id         UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -69,7 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_gap_document_id ON gap_analysis_results(document_
 CREATE INDEX IF NOT EXISTS idx_gap_tenant_id   ON gap_analysis_results(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_gap_severity    ON gap_analysis_results(severity);
 
--- ── Generated Schemas ─────────────────────────────────────────────────────────
+-- ── Generated Schemas 
 CREATE TABLE IF NOT EXISTS generated_schemas (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID REFERENCES documents(id) ON DELETE CASCADE,
@@ -93,8 +98,7 @@ CREATE TRIGGER trg_schemas_updated_at
     BEFORE UPDATE ON generated_schemas
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- ── Sync Log ──────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS sync_log (
+Sync Log 
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sync_type       TEXT NOT NULL,
     status          TEXT NOT NULL

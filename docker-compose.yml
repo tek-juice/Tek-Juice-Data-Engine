@@ -29,7 +29,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-data_engine_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "5432:5432"           # direct access for migrations/admin only
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schemas:/docker-entrypoint-initdb.d
@@ -37,6 +37,44 @@ services:
       - data_engine_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-data_engine_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PgBouncer — Connection Pooler ─────────
+  # Sits between all app services and PostgreSQL.
+  # Prevents connection exhaustion when Celery scales to 16+ workers.
+  # All services connect to pgbouncer:6432, NOT postgres:5432.
+  pgbouncer:
+    image: bitnami/pgbouncer:1.22.1
+    container_name: data_engine_pgbouncer
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_HOST:         postgres
+      POSTGRESQL_PORT:         5432
+      POSTGRESQL_DATABASE:     ${POSTGRES_DB:-data_engine}
+      POSTGRESQL_USERNAME:     ${POSTGRES_USER:-data_engine_user}
+      POSTGRESQL_PASSWORD:     ${POSTGRES_PASSWORD:-password}
+      PGBOUNCER_PORT:          6432
+      PGBOUNCER_POOL_MODE:     transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 200
+      PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_MIN_POOL_SIZE: 5
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+      PGBOUNCER_RESERVE_POOL_TIMEOUT: 3
+      PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
+      PGBOUNCER_SERVER_LIFETIME: 3600
+      PGBOUNCER_LOG_CONNECTIONS: yes
+      PGBOUNCER_LOG_DISCONNECTIONS: yes
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 6432 -U ${POSTGRES_USER:-data_engine_user}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -70,7 +108,7 @@ services:
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -92,7 +130,7 @@ services:
     volumes:
       - storage_uploads:/app/storage/uploads
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
     networks:
       - data_engine_net
@@ -109,6 +147,9 @@ services:
     env_file: .env
     ports:
       - "${EMBEDDING_SERVICE_PORT:-8003}:8003"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
     networks:
       - data_engine_net
 
@@ -127,7 +168,7 @@ services:
     volumes:
       - storage_vectors:/app/storage/vectors
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
     networks:
       - data_engine_net
@@ -147,6 +188,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
     networks:
       - data_engine_net
 
@@ -162,7 +205,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
+      pgbouncer:
         condition: service_healthy
     networks:
       - data_engine_net
@@ -195,7 +238,7 @@ services:
     ports:
       - "${DASHBOARD_BACKEND_PORT:-8011}:8011"
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy

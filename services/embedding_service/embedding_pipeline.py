@@ -2,6 +2,10 @@
 DATA ENGINE — Embedding Pipeline
 Orchestrates provider selection, batching, fallback, and metrics.
 Phase 1: Core pipeline for converting chunks to vectors.
+
+Namespace isolation: each embedding model writes into a dedicated
+vector column (embedding_768, embedding_1536, etc.) to prevent
+cross-model cosine distance calculations which produce meaningless scores.
 """
 
 import asyncio
@@ -10,11 +14,40 @@ import structlog
 from typing import Protocol
 
 from configs.settings import get_settings
-from configs.constants import EmbeddingProvider
+from configs.constants import EmbeddingProvider, EMBEDDING_MODELS
 from shared.exceptions.base import EmbeddingProviderError
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
+
+# Maps dimension count → database column name
+DIMENSION_TO_COLUMN: dict[int, str] = {
+    768:  "embedding_768",
+    1536: "embedding_1536",
+    1024: "embedding_1024",
+    3072: "embedding_3072",
+}
+
+
+def get_vector_column(provider: str, model: str) -> str:
+    """
+    Return the correct vector namespace column for a given provider/model.
+    Raises ValueError if the model is not registered in EMBEDDING_MODELS.
+    """
+    provider_models = EMBEDDING_MODELS.get(provider, {})
+    dims = provider_models.get(model)
+    if dims is None:
+        raise ValueError(
+            f"Unknown model '{model}' for provider '{provider}'. "
+            f"Register it in configs/constants.py EMBEDDING_MODELS."
+        )
+    col = DIMENSION_TO_COLUMN.get(dims)
+    if col is None:
+        raise ValueError(
+            f"No namespace column defined for {dims} dimensions. "
+            f"Add 'embedding_{dims}' column to the embeddings table."
+        )
+    return col
 
 
 class EmbeddingProviderProtocol(Protocol):
@@ -115,6 +148,8 @@ class EmbeddingPipeline:
                     provider=provider_name,
                     count=len(embeddings),
                     duration_ms=round(duration * 1000, 2),
+                    model=settings.default_embedding_model,
+                    vector_column=get_vector_column(provider_name, settings.default_embedding_model),
                 )
                 return embeddings, p.provider_name, settings.default_embedding_model
 

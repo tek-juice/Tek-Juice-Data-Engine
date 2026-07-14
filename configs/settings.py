@@ -38,7 +38,7 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in v.split(",")]
         return v
 
-    # ── PostgreSQL 
+    # ── PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "data_engine"
@@ -49,15 +49,31 @@ class Settings(BaseSettings):
     postgres_pool_timeout: int = 30
     postgres_echo: bool = False
 
+    # ── PgBouncer — Connection Pooler
+    # All services connect through PgBouncer, NOT directly to PostgreSQL.
+    # PgBouncer runs on port 6432 and multiplexes connections to PostgreSQL.
+    # Set pgbouncer_enabled=False only for migrations (alembic needs direct connection).
+    pgbouncer_host: str = "localhost"
+    pgbouncer_port: int = 6432
+    pgbouncer_enabled: bool = True
+
     @property
     def database_url(self) -> str:
+        """
+        Returns the async database URL.
+        Routes through PgBouncer when enabled (production/staging).
+        Falls back to direct PostgreSQL for migrations and development.
+        """
+        host = self.pgbouncer_host if self.pgbouncer_enabled else self.postgres_host
+        port = self.pgbouncer_port if self.pgbouncer_enabled else self.postgres_port
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            f"@{host}:{port}/{self.postgres_db}"
         )
 
     @property
     def sync_database_url(self) -> str:
+        """Sync URL for Alembic migrations — always connects directly to PostgreSQL."""
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
@@ -128,6 +144,11 @@ class Settings(BaseSettings):
         if not self.proxy_pool:
             return [self.proxy_url] if self.proxy_url else []
         return [p.strip() for p in self.proxy_pool.split(",") if p.strip()]
+
+    # ── Headless Browser (Playwright)
+    headless_browser_enabled: bool = True
+    playwright_browser: str = "chromium"
+    headless_max_concurrent: int = 3
 
     # ── Social Media Scrapers
     # Reddit (https://www.reddit.com/prefs/apps)

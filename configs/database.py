@@ -30,7 +30,13 @@ def _build_engine_kwargs() -> dict[str, Any]:
         "echo": settings.postgres_echo,
         "future": True,
     }
-    if settings.is_production:
+    if settings.pgbouncer_enabled:
+        # PgBouncer transaction mode requires NullPool — SQLAlchemy must NOT
+        # maintain its own connection pool since PgBouncer manages pooling.
+        # Using QueuePool with PgBouncer transaction mode causes "prepared
+        # statement does not exist" and connection exhaustion errors.
+        base["poolclass"] = NullPool
+    elif settings.is_production:
         base.update(
             {
                 "poolclass": AsyncAdaptedQueuePool,
@@ -42,7 +48,7 @@ def _build_engine_kwargs() -> dict[str, Any]:
             }
         )
     else:
-        # Use NullPool in tests / development to avoid connection leaks
+        # Development without PgBouncer — NullPool avoids connection leaks
         base["poolclass"] = NullPool
 
     return base

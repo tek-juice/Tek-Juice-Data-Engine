@@ -12,6 +12,7 @@ from configs.settings import get_settings
 from services.schema_factory.jsonld import JSONLDGenerator
 from services.schema_factory.metadata import MetadataGenerator
 from services.schema_factory.ontology import OntologyBuilder
+from services.schema_factory.schema_builder import SchemaBuilder, GEOEntity
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -30,9 +31,10 @@ class LLMSchemaFactory:
     """
 
     def __init__(self) -> None:
-        self._jsonld = JSONLDGenerator()
-        self._metadata = MetadataGenerator()
-        self._ontology = OntologyBuilder()
+        self._jsonld    = JSONLDGenerator()
+        self._metadata  = MetadataGenerator()
+        self._ontology  = OntologyBuilder()
+        self._builder   = SchemaBuilder()   # GEO-optimised orchestrator
 
     async def generate_from_gap(
         self,
@@ -41,25 +43,63 @@ class LLMSchemaFactory:
         missing_topics: list[str],
         content_excerpt: str,
         schema_type: str = "Article",
+        entities: list[GEOEntity] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Generate schemas to address identified content gaps.
+        Generate GEO-optimised schemas to address identified content gaps.
 
         Returns:
-            Dict with generated schemas (jsonld, metadata, ontology).
+            Dict with generated schemas (jsonld, metadata, ontology,
+            first_sentence, same_as_urls, citation_score).
         """
-        # Try LLM-enhanced generation first, fall back to rule-based
+        entities = entities or []
+        metadata = metadata or {}
+
+        # Use SchemaBuilder as the primary path — full GEO optimisation
+        try:
+            bundle = await self._builder.build(
+                document_id=document_id,
+                tenant_id=tenant_id,
+                content=content_excerpt,
+                schema_type=schema_type,
+                entities=entities,
+                metadata={
+                    **metadata,
+                    "keywords": missing_topics[:10],
+                    "description": f"Content covering: {', '.join(missing_topics[:3])}",
+                },
+                missing_topics=missing_topics,
+            )
+            return {
+                "document_id":              bundle.document_id,
+                "tenant_id":                bundle.tenant_id,
+                "jsonld":                   bundle.jsonld,
+                "script_tag":               bundle.script_tag,
+                "metadata_html":            bundle.metadata_html,
+                "open_graph":               bundle.open_graph,
+                "twitter_card":             bundle.twitter_card,
+                "ontology":                 bundle.ontology,
+                "first_sentence":           bundle.first_sentence,
+                "geo_entities":             bundle.geo_entities,
+                "same_as_urls":             bundle.same_as_urls,
+                "citation_score":           bundle.citation_score,
+                "missing_topics_addressed": missing_topics[:10],
+            }
+        except Exception as exc:
+            logger.warning("schema_builder_failed_using_fallback", error=str(exc))
+
+        # Fallback: rule-based generation without GEO optimisation
         try:
             llm_schema = await self._llm_generate(
                 missing_topics=missing_topics,
                 content_excerpt=content_excerpt,
                 schema_type=schema_type,
             )
-        except Exception as exc:
-            logger.warning("llm_schema_generation_failed_using_fallback", error=str(exc))
+        except Exception as llm_exc:
+            logger.warning("llm_schema_generation_failed", error=str(llm_exc))
             llm_schema = None
 
-        # Rule-based JSON-LD generation
         jsonld_schema = self._jsonld.generate(
             schema_type=schema_type,
             content=content_excerpt,
@@ -68,33 +108,27 @@ class LLMSchemaFactory:
                 "description": f"Content covering: {', '.join(missing_topics[:3])}",
             },
         )
-
-        # Metadata bundle
-        metadata_bundle = self._metadata.generate(
+        meta_bundle = self._metadata.generate(
             content=content_excerpt,
             metadata={"keywords": missing_topics},
         )
-
-        # Ontology from missing topics
         ontology = self._ontology.build_from_topics(missing_topics)
 
         result = {
-            "document_id":  document_id,
-            "tenant_id":    tenant_id,
-            "jsonld":       llm_schema or jsonld_schema,
-            "metadata":     {
-                "title":        metadata_bundle.title,
-                "description":  metadata_bundle.description,
-                "keywords":     metadata_bundle.keywords,
-                "open_graph":   metadata_bundle.open_graph,
-                "twitter_card": metadata_bundle.twitter_card,
+            "document_id":              document_id,
+            "tenant_id":                tenant_id,
+            "jsonld":                   llm_schema or jsonld_schema,
+            "metadata": {
+                "title":        meta_bundle.title,
+                "description":  meta_bundle.description,
+                "keywords":     meta_bundle.keywords,
+                "open_graph":   meta_bundle.open_graph,
+                "twitter_card": meta_bundle.twitter_card,
             },
-            "ontology":     ontology.to_dict(),
+            "ontology":                 ontology.to_dict(),
             "missing_topics_addressed": missing_topics[:10],
         }
-
         await self._persist(result)
-        logger.info("llm_schema_factory_complete", document_id=document_id)
         return result
 
     async def _llm_generate(

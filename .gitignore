@@ -11,3 +11,6 @@ build/
 .ruff_cache/
 storage/
 *.log
+
+# PgBouncer — contains hashed credentials, never commit
+infrastructure/pgbouncer/userlist.txt

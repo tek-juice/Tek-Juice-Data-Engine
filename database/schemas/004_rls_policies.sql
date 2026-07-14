@@ -4,7 +4,7 @@
 -- Set the tenant context before each request:
 --   SET LOCAL app.current_tenant_id = '<tenant_uuid>';
 
--- ── Enable RLS on all tenant-scoped tables ────────────────────────────────────
+Enable RLS on all tenant-scoped tables 
 ALTER TABLE users                   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chunks                  ENABLE ROW LEVEL SECURITY;
@@ -17,7 +17,7 @@ ALTER TABLE geo_entities            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_graph_edges   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE geo_optimisation_results ENABLE ROW LEVEL SECURITY;
 
--- ── Policies ──────────────────────────────────────────────────────────────────
+ Policies 
 
 -- users
 DROP POLICY IF EXISTS tenant_isolation ON users;

@@ -1,7 +1,7 @@
 -- DATA ENGINE — SEO & GEO Schema
 -- Phase 4: Tables for SEO analysis, GEO entity mapping, knowledge graph
 
--- ── SEO Analysis ──────────────────────────────────────────────────────────────
+ SEO Analysis 
 CREATE TABLE IF NOT EXISTS seo_analysis (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id         UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS seo_analysis (
 CREATE INDEX IF NOT EXISTS idx_seo_document_id ON seo_analysis(document_id);
 CREATE INDEX IF NOT EXISTS idx_seo_tenant_id   ON seo_analysis(tenant_id);
 
--- ── GEO Entity Map ────────────────────────────────────────────────────────────
+-- ── GEO Entity Map
 CREATE TABLE IF NOT EXISTS geo_entities (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id     UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -35,20 +35,24 @@ CREATE TABLE IF NOT EXISTS geo_entities (
                             'Product','Event','Concept','Technology'
                         )),
     confidence      FLOAT CHECK (confidence BETWEEN 0.0 AND 1.0),
-    embedding       VECTOR(1536),
+    -- Namespace columns
+    embedding_768   VECTOR(768),
+    embedding_1536  VECTOR(1536),
+    embedding_model TEXT,
+    embedding_dims  INTEGER,
     wikidata_id     TEXT,
+    same_as_urls    TEXT[] DEFAULT '{}',   -- sameAs links for GEO entity trust
     metadata        JSONB NOT NULL DEFAULT '{}',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_geo_entities_document_id ON geo_entities(document_id);
-CREATE INDEX IF NOT EXISTS idx_geo_entities_tenant_id   ON geo_entities(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_geo_entities_type        ON geo_entities(entity_type);
-CREATE INDEX IF NOT EXISTS idx_geo_entities_hnsw        ON geo_entities
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64);
+CREATE INDEX IF NOT EXISTS idx_geo_entities_document_id  ON geo_entities(document_id);
+CREATE INDEX IF NOT EXISTS idx_geo_entities_tenant_id    ON geo_entities(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_geo_entities_type         ON geo_entities(entity_type);
+CREATE INDEX IF NOT EXISTS idx_geo_entities_hnsw_768     ON geo_entities USING hnsw (embedding_768  vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_768  IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_geo_entities_hnsw_1536    ON geo_entities USING hnsw (embedding_1536 vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_1536 IS NOT NULL;
 
--- ── Knowledge Graph Edges ─────────────────────────────────────────────────────
+-- ── Knowledge Graph Edges 
 CREATE TABLE IF NOT EXISTS knowledge_graph_edges (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -64,7 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_kg_edges_source    ON knowledge_graph_edges(sourc
 CREATE INDEX IF NOT EXISTS idx_kg_edges_target    ON knowledge_graph_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_kg_edges_tenant_id ON knowledge_graph_edges(tenant_id);
 
--- ── GEO Optimisation Results ──────────────────────────────────────────────────
+-- ── GEO Optimisation Results 
 CREATE TABLE IF NOT EXISTS geo_optimisation_results (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id             UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
