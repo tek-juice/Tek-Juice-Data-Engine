@@ -193,6 +193,195 @@ services:
     networks:
       - data_engine_net
 
+  # ── SEO Engine ───────────────────────────
+  seo_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: seo_engine
+    container_name: data_engine_seo
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${SEO_ENGINE_PORT:-8012}:8012"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── GEO Engine ───────────────────────────
+  geo_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: geo_engine
+    container_name: data_engine_geo
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${GEO_ENGINE_PORT:-8013}:8013"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── AEO Engine ───────────────────────────
+  # Answer Engine Optimisation — Featured Snippets, Voice Search,
+  # Position-Zero, People Also Ask, AI Overviews
+  # Swagger UI: http://localhost:8014/docs
+  aeo_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: aeo_engine
+    container_name: data_engine_aeo
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${AEO_ENGINE_PORT:-8014}:8014"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Chunking Service ──────────────────────
+  chunking_service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: chunking_service
+    container_name: data_engine_chunking
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${CHUNKING_SERVICE_PORT:-8002}:8002"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Semantic Engine ───────────────────────
+  semantic_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: semantic_engine
+    container_name: data_engine_semantic
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${SEMANTIC_ENGINE_PORT:-8007}:8007"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Gap Detection ─────────────────────────
+  gap_detection:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: gap_detection
+    container_name: data_engine_gap
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${GAP_DETECTION_PORT:-8008}:8008"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Schema Factory ────────────────────────
+  schema_factory:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: schema_factory
+    container_name: data_engine_schema
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${SCHEMA_FACTORY_PORT:-8009}:8009"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Synchronization Service ───────────────
+  synchronization:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: synchronization
+    container_name: data_engine_sync
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${SYNC_SERVICE_PORT:-8010}:8010"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Trend Scraper ─────────────────────────
+  trend_scraper:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: trend_scraper
+    container_name: data_engine_trends
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${TREND_SCRAPER_PORT:-8006}:8006"
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Dashboard Backend ─────────────────────
+  dashboard_backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: dashboard_backend
+    container_name: data_engine_dashboard
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${DASHBOARD_BACKEND_PORT:-8011}:8011"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
   # ── Celery Worker ─────────────────────────
   celery_worker:
     build:
@@ -220,26 +409,6 @@ services:
     env_file: .env
     command: celery -A workers.celery.app beat --loglevel=info
     depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - data_engine_net
-
-  # ── Dashboard Backend ─────────────────────
-  dashboard_backend:
-    build:
-      context: .
-      dockerfile: infrastructure/docker/Dockerfile.service
-      args:
-        SERVICE: dashboard_backend
-    container_name: data_engine_dashboard
-    restart: unless-stopped
-    env_file: .env
-    ports:
-      - "${DASHBOARD_BACKEND_PORT:-8011}:8011"
-    depends_on:
-      pgbouncer:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks:

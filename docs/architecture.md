@@ -125,19 +125,15 @@ Provide centralised management, operational monitoring, and real-time system vis
         ┌──────────────┼──────────────┐
         ▼              ▼              ▼
 ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
-│  Dashboard   │ │  Telemetry   │ │   Before/After   │
-│  Backend     │ │  Stream View │ │   Gap Graph API  │
+│  Telemetry   │ │  Gap Graph   │ │   Schema / SEO   │
+│  Stream API  │ │     API      │ │   / GEO APIs     │
 └──────────────┘ └──────────────┘ └──────────────────┘
-        │
-        ▼
-  Admin Frontend (separate project)
 ```
 
 ### Key Services
 | Service | Role |
 |---------|------|
 | `api_gateway` | Authentication, rate limiting, request routing, API key management |
-| `dashboard_backend` | Analytics API, WebSocket streams, metrics aggregation |
 
 ---
 

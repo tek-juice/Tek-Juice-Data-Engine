@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # ── API Gateway 
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
-    gateway_allowed_origins: List[str] = ["http://localhost:3000"]
+    gateway_allowed_origins: List[str] = []
 
     @field_validator("gateway_allowed_origins", mode="before")
     @classmethod
@@ -205,6 +205,7 @@ class Settings(BaseSettings):
     dashboard_backend_port: int = 8011
     seo_engine_port: int = 8012
     geo_engine_port: int = 8013
+    aeo_engine_port: int = 8014
 
     # ── Rate Limiting 
     rate_limit_standard: int = 100       # requests per minute

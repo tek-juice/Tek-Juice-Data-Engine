@@ -86,7 +86,6 @@ health:
 	@curl -sf http://localhost:8003/health || echo "FAIL: embedding_service"
 	@curl -sf http://localhost:8004/health || echo "FAIL: vector_vault"
 	@curl -sf http://localhost:8005/health || echo "FAIL: telemetry_service"
-	@curl -sf http://localhost:8011/health || echo "FAIL: dashboard_backend"
 	@echo "Health check complete."
 
 logs:

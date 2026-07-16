@@ -156,7 +156,7 @@ class TelemetrySource(str, Enum):
     RSS = "rss"
 
 
-# ── SEO / GEO 
+# ── SEO / GEO / AEO 
 
 class MetadataFormat(str, Enum):
     OPEN_GRAPH = "opengraph"
@@ -175,6 +175,72 @@ class EntityType(str, Enum):
     TECHNOLOGY = "Technology"
 
 
+# ── AEO — Answer Engine Optimisation ─────────────────────────────────────────
+
+class AEOSnippetType(str, Enum):
+    PARAGRAPH  = "paragraph"
+    LIST       = "list"
+    TABLE      = "table"
+    STEPS      = "steps"
+    DEFINITION = "definition"
+    NONE       = "none"
+
+
+class AEOPositionZeroType(str, Enum):
+    SNIPPET_PARAGRAPH = "featured_snippet_paragraph"
+    SNIPPET_LIST      = "featured_snippet_list"
+    SNIPPET_TABLE     = "featured_snippet_table"
+    SNIPPET_STEPS     = "featured_snippet_steps"
+    PEOPLE_ALSO_ASK   = "people_also_ask"
+    KNOWLEDGE_PANEL   = "knowledge_panel"
+    ANSWER_BOX        = "answer_box"
+    AI_OVERVIEW       = "ai_overview"
+    NONE              = "none"
+
+
+class AEOQuestionIntent(str, Enum):
+    INFORMATIONAL = "informational"
+    NAVIGATIONAL  = "navigational"
+    TRANSACTIONAL = "transactional"
+    COMPARATIVE   = "comparative"
+    PROCEDURAL    = "procedural"
+    DEFINITIONAL  = "definitional"
+    CAUSAL        = "causal"
+    QUANTITATIVE  = "quantitative"
+
+
+class AEOEngineTarget(str, Enum):
+    GOOGLE_FEATURED_SNIPPET = "google_featured_snippet"
+    GOOGLE_AI_OVERVIEW      = "google_ai_overview"
+    BING_ANSWER_BOX         = "bing_answer_box"
+    PERPLEXITY              = "perplexity"
+    CHATGPT                 = "chatgpt"
+    SIRI                    = "siri"
+    ALEXA                   = "alexa"
+    GOOGLE_ASSISTANT        = "google_assistant"
+    PEOPLE_ALSO_ASK         = "people_also_ask"
+    KNOWLEDGE_PANEL         = "knowledge_panel"
+
+
+# AEO optimal content lengths (words)
+AEO_PARAGRAPH_SNIPPET_MIN  = 40
+AEO_PARAGRAPH_SNIPPET_MAX  = 60
+AEO_VOICE_ANSWER_MIN       = 20
+AEO_VOICE_ANSWER_MAX       = 30
+AEO_ANSWER_BOX_MAX         = 30
+AEO_PAA_QUESTION_MIN_WORDS = 4
+AEO_PAA_QUESTION_MAX_WORDS = 8
+
+# AEO score weights for composite score
+AEO_WEIGHT_ANSWER_READINESS  = 0.30
+AEO_WEIGHT_SNIPPET_READINESS = 0.25
+AEO_WEIGHT_PZ_READINESS      = 0.25
+AEO_WEIGHT_VOICE_READINESS   = 0.20
+
+# Celery task names for AEO
+TASK_RUN_AEO_ANALYSIS = "tasks.run_aeo_analysis"
+
+
 # ── HTTP / API 
 
 DEFAULT_PAGE_SIZE = 20
@@ -189,14 +255,17 @@ API_VERSION_HEADER = "X-API-Version"
 
 # ── Celery Task Names 
 
-TASK_INGEST_DOCUMENT = "tasks.ingest_document"
-TASK_CHUNK_TEXT = "tasks.chunk_text"
+TASK_INGEST_DOCUMENT     = "tasks.ingest_document"
+TASK_CHUNK_TEXT          = "tasks.chunk_text"
 TASK_GENERATE_EMBEDDINGS = "tasks.generate_embeddings"
-TASK_STORE_VECTORS = "tasks.store_vectors"
-TASK_RUN_GAP_ANALYSIS = "tasks.run_gap_analysis"
-TASK_GENERATE_SCHEMA = "tasks.generate_schema"
-TASK_SCRAPE_TRENDS = "tasks.scrape_trends"
-TASK_SYNC_DATA_POOL = "tasks.sync_data_pool"
+TASK_STORE_VECTORS       = "tasks.store_vectors"
+TASK_RUN_GAP_ANALYSIS    = "tasks.run_gap_analysis"
+TASK_GENERATE_SCHEMA     = "tasks.generate_schema"
+TASK_SCRAPE_TRENDS       = "tasks.scrape_trends"
+TASK_SYNC_DATA_POOL      = "tasks.sync_data_pool"
+TASK_RUN_SEO_ANALYSIS    = "tasks.run_seo_analysis"
+TASK_RUN_GEO_ANALYSIS    = "tasks.run_geo_analysis"
+TASK_RUN_AEO_ANALYSIS    = "tasks.run_aeo_analysis"
 
 
 # ── Cache TTLs (seconds) 

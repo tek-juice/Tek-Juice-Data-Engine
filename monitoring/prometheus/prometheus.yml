@@ -47,12 +47,6 @@ scrape_configs:
       - targets: ["telemetry_service:8005"]
     metrics_path: /metrics
 
-  # ── Dashboard Backend ─────────────────────────
-  - job_name: "dashboard_backend"
-    static_configs:
-      - targets: ["dashboard_backend:8011"]
-    metrics_path: /metrics
-
   # ── SEO Engine ────────────────────────────────
   - job_name: "seo_engine"
     static_configs:

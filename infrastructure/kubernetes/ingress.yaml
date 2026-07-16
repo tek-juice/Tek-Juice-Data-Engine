@@ -37,10 +37,3 @@ spec:
                 name: api-gateway
                 port:
                   number: 8000
-          - path: /ws
-            pathType: Prefix
-            backend:
-              service:
-                name: dashboard-backend
-                port:
-                  number: 8011

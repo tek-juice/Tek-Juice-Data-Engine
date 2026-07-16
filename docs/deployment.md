@@ -77,7 +77,6 @@ docker-compose up -d --scale celery_worker=4
 | Embedding | http://localhost:8003 |
 | Vector Vault | http://localhost:8004 |
 | Telemetry | http://localhost:8005 |
-| Dashboard Backend | http://localhost:8011 |
 | Prometheus | http://localhost:9090 |
 | Grafana | http://localhost:3000 |
 
