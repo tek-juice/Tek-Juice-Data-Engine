@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import urllib.parse
 import structlog
 from dataclasses import dataclass, field
 from typing import Any
@@ -33,7 +34,11 @@ from playwright.async_api import (
 )
 
 from configs.settings import get_settings
-from services.trend_scraper.utils.anti_block import USER_AGENTS, get_random_headers
+from services.trend_scraper.utils.anti_block import (
+    get_random_headers,
+    get_random_ua_and_viewport,
+    _proxy_rotator,
+)
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -61,10 +66,33 @@ class PageContent:
     cloudflare_bypassed: bool = False
 
 
+def _parse_proxy_for_playwright(proxy_url: str) -> dict[str, str]:
+    """
+    Convert a proxy URL (possibly containing credentials) into the dict
+    that Playwright's launch(proxy=...) option expects.
+
+    Supports both:
+      - http://host:port               → {"server": "http://host:port"}
+      - http://user:pass@host:port     → {"server": "...", "username": ..., "password": ...}
+    """
+    parsed = urllib.parse.urlparse(proxy_url)
+    server = urllib.parse.urlunparse(parsed._replace(netloc=parsed.hostname + (f":{parsed.port}" if parsed.port else "")))
+    result: dict[str, str] = {"server": server}
+    if parsed.username:
+        result["username"] = urllib.parse.unquote(parsed.username)
+    if parsed.password:
+        result["password"] = urllib.parse.unquote(parsed.password)
+    return result
+
+
 class HeadlessBrowser:
     """
     Async context manager wrapping Playwright Chromium.
     Handles stealth mode, DOM hydration waiting, and scroll simulation.
+
+    Each instantiation pulls a fresh proxy from the health-aware rotator
+    so headless requests cycle through the full pool rather than always
+    hitting the same IP.
 
     Example:
         async with HeadlessBrowser() as browser:
@@ -77,9 +105,11 @@ class HeadlessBrowser:
         proxy: str | None = None,
         stealth: bool = True,
     ) -> None:
-        self._headless  = headless
-        self._proxy_url = proxy or (settings.proxy_list[0] if settings.proxy_list else None)
-        self._stealth   = stealth
+        self._headless = headless
+        self._stealth  = stealth
+        # Use the caller-supplied proxy, or draw from the rotation pool.
+        # _proxy_rotator.next_proxy() is health-aware: it skips quarantined IPs.
+        self._proxy_url: str | None = proxy or _proxy_rotator.next_proxy()
         self._playwright = None
         self._browser: Browser | None = None
 
@@ -100,7 +130,8 @@ class HeadlessBrowser:
             ],
         }
         if self._proxy_url:
-            launch_opts["proxy"] = {"server": self._proxy_url}
+            # Playwright needs credentials parsed out of the URL separately
+            launch_opts["proxy"] = _parse_proxy_for_playwright(self._proxy_url)
 
         self._browser = await self._playwright.chromium.launch(**launch_opts)
         return self
@@ -134,12 +165,11 @@ class HeadlessBrowser:
         if not self._browser:
             raise RuntimeError("HeadlessBrowser must be used as async context manager")
 
-        import random
-        user_agent = random.choice(USER_AGENTS)
+        user_agent, (vp_width, vp_height) = get_random_ua_and_viewport()
 
         context: BrowserContext = await self._browser.new_context(
             user_agent=user_agent,
-            viewport={"width": 1280, "height": 800},
+            viewport={"width": vp_width, "height": vp_height},
             locale="en-US",
             timezone_id="America/New_York",
             # Stealth: hide webdriver flag
@@ -219,6 +249,9 @@ class HeadlessBrowser:
                          .slice(0, 100)
                 """)
 
+            if self._proxy_url:
+                _proxy_rotator.mark_success(self._proxy_url)
+
             return PageContent(
                 url=url,
                 html=html,
@@ -226,17 +259,22 @@ class HeadlessBrowser:
                 title=title,
                 links=links,
                 metadata={
-                    "user_agent": user_agent,
-                    "proxy_used": bool(self._proxy_url),
+                    "user_agent":  user_agent,
+                    "viewport":    f"{vp_width}x{vp_height}",
+                    "proxy_used":  bool(self._proxy_url),
                 },
                 was_js_rendered=was_js_rendered,
                 cloudflare_bypassed=cloudflare_bypassed,
             )
 
         except PlaywrightTimeoutError as exc:
+            if self._proxy_url:
+                _proxy_rotator.mark_failed(self._proxy_url)
             logger.warning("headless_page_timeout", url=url, error=str(exc))
             raise
         except Exception as exc:
+            if self._proxy_url:
+                _proxy_rotator.mark_failed(self._proxy_url)
             logger.error("headless_fetch_error", url=url, error=str(exc))
             raise
         finally:

@@ -61,18 +61,18 @@ class GoogleScraper:
 
         geo = country or self._next_geo()
         geo_params = get_geo_targeted_params(geo)
-        proxies = get_proxy_for_request()
+        proxies, proxy_url = get_proxy_for_request()
 
         results = []
-        async with httpx.AsyncClient(timeout=30, proxy=proxies) as client:
-            try:
+        try:
+            async with httpx.AsyncClient(timeout=30, proxy=proxies) as client:
                 response = await client.get(
                     GOOGLE_SEARCH_URL,
                     params={
-                        "key":         self._api_key,
-                        "cx":          self._cx,
-                        "q":           query,
-                        "num":         min(limit, 10),
+                        "key":          self._api_key,
+                        "cx":           self._cx,
+                        "q":            query,
+                        "num":          min(limit, 10),
                         "dateRestrict": "m1",
                         **geo_params,
                     },
@@ -96,10 +96,16 @@ class GoogleScraper:
                     })
 
                 logger.debug("google_search_complete", query=query, geo=geo, results=len(results))
+                if proxy_url:
+                    from services.trend_scraper.utils.anti_block import _proxy_rotator
+                    _proxy_rotator.mark_success(proxy_url)
 
-            except httpx.HTTPStatusError as exc:
-                logger.error("google_search_http_error", status=exc.response.status_code, geo=geo)
-                raise
+        except httpx.HTTPStatusError as exc:
+            if proxy_url:
+                from services.trend_scraper.utils.anti_block import _proxy_rotator
+                _proxy_rotator.mark_failed(proxy_url)
+            logger.error("google_search_http_error", status=exc.response.status_code, geo=geo)
+            raise
 
         await smart_delay()
         return results

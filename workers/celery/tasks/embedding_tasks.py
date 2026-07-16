@@ -74,7 +74,7 @@ def generate_embeddings(self, document_id: str, tenant_id: str) -> dict:
             }
 
     try:
-        return asyncio.get_event_loop().run_until_complete(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("embedding_generation_failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc)
@@ -132,7 +132,7 @@ def store_vectors(self, embedding_result: dict) -> dict:
             return {"document_id": document_id, "vectors_stored": stored, "status": "completed"}
 
     try:
-        return asyncio.get_event_loop().run_until_complete(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("vector_store_failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc)

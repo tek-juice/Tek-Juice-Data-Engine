@@ -6,7 +6,7 @@ Applies to all test directories.
 import os
 import pytest
 
-# ── Set test environment variables before any imports ─────────────────────────
+# ── Set test environment variables before any imports 
 os.environ.setdefault("APP_ENV",        "testing")
 os.environ.setdefault("APP_DEBUG",      "false")
 os.environ.setdefault("APP_SECRET_KEY", "test-secret-key-that-is-at-least-32-chars-long!")
@@ -14,7 +14,7 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key-that-is-at-least-32
 os.environ.setdefault("POSTGRES_PASSWORD", "test-password")
 
 
-# ── Markers ───────────────────────────────────────────────────────────────────
+# ── Markers
 def pytest_configure(config):
     config.addinivalue_line("markers", "unit:        fast, isolated unit tests")
     config.addinivalue_line("markers", "integration: tests requiring a live DB/Redis")

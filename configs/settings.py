@@ -6,7 +6,7 @@ Loaded via pydantic-settings from environment variables / .env file.
 from functools import lru_cache
 from typing import List, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Application 
+    # ── Application
     app_env: Literal["development", "staging", "production"] = "development"
     app_debug: bool = False
     app_secret_key: str = Field(..., min_length=32)
@@ -26,17 +26,24 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     app_name: str = "DATA ENGINE"
 
-    # ── API Gateway 
+    # ── API Gateway
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
-    gateway_allowed_origins: List[str] = []
+    # Pydantic-settings v2 tries json.loads() on List fields from .env before
+    # calling validators.  Storing as str and exposing gateway_allowed_origins
+    # as a @property prevents the JSON-parse error on comma-separated values.
+    _gateway_allowed_origins_raw: str = ""
+    gateway_allowed_origins_str: str = Field(
+        default="", alias="gateway_allowed_origins"
+    )
 
-    @field_validator("gateway_allowed_origins", mode="before")
-    @classmethod
-    def parse_origins(cls, v: str | list) -> list:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    @property
+    def gateway_allowed_origins(self) -> List[str]:
+        """Return parsed list of CORS origins from the comma-separated env var."""
+        raw = self.gateway_allowed_origins_str
+        if not raw:
+            return []
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
     # ── PostgreSQL
     postgres_host: str = "localhost"
@@ -125,11 +132,26 @@ class Settings(BaseSettings):
     api_key_header: str = "X-API-Key"
     bcrypt_rounds: int = 12
 
-    # ── Trend Scraper 
+    # ── Trend Scraper
     google_search_api_key: str = ""
     google_search_cx: str = ""
     bing_search_api_key: str = ""
     scraper_interval_seconds: int = 3600
+
+    # ── DataForSEO — SERP Rank Tracking & Backlink Authority
+    # Credentials: https://app.dataforseo.com/api-dashboard
+    dataforseo_login: str = ""
+    dataforseo_password: str = ""
+    # Rank tracking: how often to refresh keyword rankings (seconds)
+    rank_tracking_interval_seconds: int = 86400   # 24 hours
+    # Authority: how often to refresh domain authority snapshots (seconds)
+    authority_tracking_interval_seconds: int = 86400  # 24 hours
+
+    # ── NER / spaCy
+    # Set to False to force rule-based entity extraction (no spaCy required)
+    spacy_ner_enabled: bool = True
+    # Set to True to enable Wikidata sameAs linking for entities
+    wikidata_linking_enabled: bool = True
 
     # ── Proxy & Anti-blocking
     proxy_url: str = ""

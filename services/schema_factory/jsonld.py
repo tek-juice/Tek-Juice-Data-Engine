@@ -68,8 +68,8 @@ class JSONLDGenerator:
             "headline":         meta.get("title", self._extract_title(content)),
             "description":      meta.get("description", content[:200].strip()),
             "articleBody":      content[:5000],
-            "author":           {"@type": "Organisation", "name": meta.get("author", "DATA ENGINE")},
-            "publisher":        {"@type": "Organisation", "name": meta.get("publisher", "DATA ENGINE")},
+            "author":           {"@type": "Organization", "name": meta.get("author", "DATA ENGINE")},
+            "publisher":        {"@type": "Organization", "name": meta.get("publisher", "DATA ENGINE")},
             "datePublished":    meta.get("date_published", datetime.now(UTC).strftime("%Y-%m-%d")),
             "inLanguage":       meta.get("language", "en"),
             "keywords":         meta.get("keywords", []),
@@ -142,7 +142,7 @@ class JSONLDGenerator:
         schema.update({
             "name":        meta.get("name", self._extract_title(content)),
             "description": meta.get("description", content[:300].strip()),
-            "creator":     {"@type": "Organisation", "name": meta.get("creator", "DATA ENGINE")},
+            "creator":     {"@type": "Organization", "name": meta.get("creator", "DATA ENGINE")},
             "license":     meta.get("license", "https://creativecommons.org/licenses/by/4.0/"),
         })
         return schema

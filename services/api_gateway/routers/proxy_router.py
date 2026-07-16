@@ -6,7 +6,6 @@ Reverse-proxies authenticated requests to downstream services.
 import structlog
 import httpx
 from fastapi import APIRouter, Request, Response
-from fastapi.responses import StreamingResponse
 
 from configs.settings import get_settings
 from shared.authentication.jwt_handler import CurrentUser
@@ -28,6 +27,11 @@ SERVICE_BASE_URLS = {
     "dashboard":  f"http://localhost:{settings.dashboard_backend_port}",
     "seo":        f"http://localhost:{settings.seo_engine_port}",
     "geo":        f"http://localhost:{settings.geo_engine_port}",
+    "aeo":        f"http://localhost:{settings.aeo_engine_port}",
+    # LEO: public inventory/pricing/availability API for direct AI engine consumption
+    "leo":        f"http://localhost:{settings.geo_engine_port}",
+    # VSEO: multi-modal image/video optimiser endpoints
+    "vseo":       f"http://localhost:{settings.geo_engine_port}",
 }
 
 

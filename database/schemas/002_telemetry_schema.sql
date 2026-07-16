@@ -98,7 +98,7 @@ CREATE TRIGGER trg_schemas_updated_at
     BEFORE UPDATE ON generated_schemas
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
-Sync Log 
+CREATE TABLE IF NOT EXISTS sync_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sync_type       TEXT NOT NULL,
     status          TEXT NOT NULL

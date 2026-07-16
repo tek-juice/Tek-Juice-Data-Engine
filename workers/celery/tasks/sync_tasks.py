@@ -30,7 +30,7 @@ def sync_data_pool(self) -> dict:
         }
 
     try:
-        return asyncio.get_event_loop().run_until_complete(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("sync_task_failed", error=str(exc))
         raise self.retry(exc=exc)
@@ -47,4 +47,4 @@ def invalidate_cache_for_tenant(tenant_id: str) -> dict:
         logger.info("tenant_cache_invalidated", tenant_id=tenant_id, deleted=deleted)
         return {"tenant_id": tenant_id, "keys_deleted": deleted}
 
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())

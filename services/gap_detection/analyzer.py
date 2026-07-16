@@ -150,11 +150,14 @@ class GapAnalyzer:
         return vectors, texts
 
     async def _load_trend_vectors(self, days: int = 7) -> tuple[list[list[float]], list[dict]]:
+        from configs.settings import get_settings as _get_settings
+        _dims = _get_settings().embedding_dimension
+        _col = f"embedding_{_dims}"
         result = await self._session.execute(
             text(f"""
-                SELECT id, title, query, embedding
+                SELECT id, title, query, {_col} AS embedding
                 FROM scraped_trends
-                WHERE embedding IS NOT NULL
+                WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
                 ORDER BY scraped_at DESC
                 LIMIT 200

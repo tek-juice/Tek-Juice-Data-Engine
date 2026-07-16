@@ -59,7 +59,7 @@ def preprocess_document(self, document_id: str, tenant_id: str) -> dict:
             return {"document_id": document_id, "tenant_id": tenant_id, "char_count": len(raw_text)}
 
     try:
-        return asyncio.get_event_loop().run_until_complete(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("preprocess_failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc)
@@ -128,7 +128,7 @@ def chunk_document(self, document_id: str, tenant_id: str) -> dict:
             return {"document_id": document_id, "tenant_id": tenant_id, "chunk_count": len(chunks)}
 
     try:
-        return asyncio.get_event_loop().run_until_complete(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("chunking_failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc)

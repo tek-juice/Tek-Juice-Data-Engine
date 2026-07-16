@@ -20,9 +20,13 @@ SERVICE_HEALTH_URLS = {
     "embedding_service":   f"http://localhost:{settings.embedding_service_port}/health",
     "vector_vault":        f"http://localhost:{settings.vector_vault_port}/health",
     "telemetry_service":   f"http://localhost:{settings.telemetry_service_port}/health",
+    "trend_scraper":       f"http://localhost:{settings.trend_scraper_port}/health",
+    "gap_detection":       f"http://localhost:{settings.gap_detection_port}/health",
+    "schema_factory":      f"http://localhost:{settings.schema_factory_port}/health",
     "dashboard_backend":   f"http://localhost:{settings.dashboard_backend_port}/health",
     "seo_engine":          f"http://localhost:{settings.seo_engine_port}/health",
     "geo_engine":          f"http://localhost:{settings.geo_engine_port}/health",
+    "aeo_engine":          f"http://localhost:{settings.aeo_engine_port}/health",
 }
 
 

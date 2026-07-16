@@ -40,7 +40,7 @@ def run_gap_analysis(self, document_id: str, tenant_id: str) -> dict:
         }
 
     try:
-        return asyncio.get_event_loop().run_until_complete(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("gap_analysis_task_failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc)
@@ -73,7 +73,7 @@ def run_gap_analysis_batch(self) -> dict:
         logger.info("gap_analysis_batch_dispatched", count=len(docs))
         return {"dispatched": len(docs)}
 
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())
 
 
 @shared_task(name="tasks.generate_schema", bind=True, max_retries=3, default_retry_delay=30)
@@ -99,7 +99,7 @@ def generate_schema(
             content = (row.raw_text or "")[:500] if row else ""
 
         factory = LLMSchemaFactory()
-        schema_result = await factory.generate_from_gap(
+        await factory.generate_from_gap(
             document_id=document_id,
             tenant_id=tenant_id,
             missing_topics=missing_topics,
@@ -109,7 +109,7 @@ def generate_schema(
         return {"document_id": document_id, "schemas_generated": 1}
 
     try:
-        return asyncio.get_event_loop().run_until_complete(_run())
+        return asyncio.run(_run())
     except Exception as exc:
         logger.error("schema_generation_failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc)

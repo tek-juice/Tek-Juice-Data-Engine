@@ -9,19 +9,20 @@ ReDoc:      http://localhost:8008/redoc
 
 from contextlib import asynccontextmanager
 import structlog
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.settings import get_settings
 from configs.constants import API_PREFIX, APP_VERSION
-from configs.database import init_db, dispose_db
+from configs.database import init_db, dispose_db, get_db_session
 from shared.exceptions.handlers import register_exception_handlers
 from shared.middleware.request_id import RequestIDMiddleware
 from shared.middleware.logging import AccessLogMiddleware
-from services.gap_detection.analyzer import GapAnalyzer
-from services.gap_detection.scoring import GapScorer
+from services.gap_detection.analyzer import GapAnalyzer, GapAnalysisResult
 from services.gap_detection.recommendation import RecommendationEngine
+from services.gap_detection.content_clusters import ContentClusterBuilder
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
@@ -51,6 +52,22 @@ class GapResult(BaseModel):
     recommendations: list[str]
     before_coverage: float | None
     after_coverage: float | None
+
+
+class ContentClustersRequest(BaseModel):
+    document_id: str
+    tenant_id: str
+    missing_topics: list[str] = Field(..., min_length=1)
+    document_content: str = ""
+    max_clusters_per_topic: int = Field(default=4, ge=1, le=8)
+
+    model_config = {"json_schema_extra": {"example": {
+        "document_id": "uuid",
+        "tenant_id": "uuid",
+        "missing_topics": ["AI inventory management", "multi-channel sync"],
+        "document_content": "Our platform helps businesses manage stock across channels...",
+        "max_clusters_per_topic": 4,
+    }}}
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -104,37 +121,42 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.gateway_allowed_origin
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 register_exception_handlers(app)
 
-_analyzer = GapAnalyzer()
-_scorer = GapScorer()
 _recommender = RecommendationEngine()
+_cluster_builder = ContentClusterBuilder()
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.post(f"{API_PREFIX}/gaps/analyze", response_model=GapResult, tags=["gaps"],
           summary="Analyze content gaps for a document")
-async def analyze_gaps(request: GapAnalysisRequest = Body(...)):
+async def analyze_gaps(
+    request: GapAnalysisRequest = Body(...),
+    session: AsyncSession = Depends(get_db_session),
+):
     """
     Run a full gap analysis against a document.
     Compares document embeddings against recent trend signals.
     Returns missing topics, severity, and recommendations.
     """
     try:
-        gaps = await _analyzer.analyze(
+        analyser = GapAnalyzer(session)
+        result: GapAnalysisResult = await analyser.analyse(
             document_id=request.document_id,
             tenant_id=request.tenant_id,
-            gap_threshold=request.gap_threshold,
-            max_gaps=request.max_gaps,
         )
-        scored = _scorer.score(gaps)
-        recommendations = _recommender.generate(gaps)
+        recommendations = _recommender.generate(
+            missing_topics=result.missing_topics,
+            covered_topics=result.covered_topics,
+            gap_score=result.gap_score,
+            severity=result.severity,
+        )
         return GapResult(
-            gap_score=scored.score,
-            severity=scored.severity,
-            missing_topics=[g.get("title", "") for g in gaps],
+            gap_score=result.gap_score,
+            severity=result.severity,
+            missing_topics=result.missing_topics,
             recommendations=recommendations,
-            before_coverage=scored.before_coverage,
-            after_coverage=None,
+            before_coverage=result.before_coverage,
+            after_coverage=result.after_coverage,
         )
     except Exception as exc:
         logger.error("gap_analysis_failed", error=str(exc))
@@ -156,6 +178,33 @@ async def gap_history(document_id: str, tenant_id: str):
             rows = [dict(r._mapping) for r in result.fetchall()]
         return {"document_id": document_id, "history": rows}
     except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post(f"{API_PREFIX}/gaps/clusters", tags=["gaps"],
+          summary="Build intent-based content clusters from missing topics")
+async def build_content_clusters(request: ContentClustersRequest = Body(...)):
+    """
+    Build Intent-Based Content Clusters (GEO Pillar 4) from gap analysis missing topics.
+
+    For each missing topic, generates query variants across all intent types
+    (definitional, procedural, causal, quantitative, comparative, authority,
+    commercial, troubleshooting), scores existing coverage, and produces a
+    prioritised content brief telling writers exactly what to add.
+
+    Returns a ContentClusterReport with authority score and full content brief.
+    """
+    try:
+        report = _cluster_builder.build(
+            document_id=request.document_id,
+            tenant_id=request.tenant_id,
+            missing_topics=request.missing_topics,
+            document_content=request.document_content,
+            max_clusters_per_topic=request.max_clusters_per_topic,
+        )
+        return _cluster_builder.to_dict(report)
+    except Exception as exc:
+        logger.error("content_clusters_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
 
 

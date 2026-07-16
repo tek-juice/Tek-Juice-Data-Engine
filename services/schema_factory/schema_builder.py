@@ -13,6 +13,9 @@ Key GEO principles enforced:
   2. Entity Authority: sameAs links to Wikidata, Wikipedia, official profiles
   3. Schema Richness: nested entities, relationships, and semantic context
   4. LLM Citation Signals: structured lists, tables, statistics in content
+  5. Zero-Click Design: brand name + UVP woven into the first sentence so the
+     impression is captured even if the user never clicks through to the page.
+     Pattern enforced: "{Brand} is/provides {specific value} — {proof point}."
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from typing import Any
 
 import structlog
 
-from configs.constants import SchemaType, SCHEMA_ORG_CONTEXT, EntityType
+from configs.constants import SchemaType, SCHEMA_ORG_CONTEXT
 from configs.settings import get_settings
 from services.schema_factory.jsonld import JSONLDGenerator
 from services.schema_factory.metadata import MetadataGenerator
@@ -110,6 +113,8 @@ class SchemaBundle:
     same_as_urls: list[str]
     citation_score: float               # 0-1 score of LLM citation readiness
     script_tag: str                     # ready-to-embed HTML <script> tag
+    zero_click_score: float = 0.0       # 0-1 score of zero-click impression quality
+    zero_click_sentence: str = ""       # optimised zero-click first sentence
 
 
 class SchemaBuilder:
@@ -167,14 +172,23 @@ class SchemaBuilder:
         # 1. Enforce First Sentence Rule
         first_sentence = self._enforce_first_sentence_rule(content, metadata)
 
-        # 2. Build enriched metadata with First Sentence as description
+        # 2. Zero-Click Design: build brand+UVP sentence for AI chat interfaces
+        zero_click_sentence = self._build_zero_click_sentence(
+            content=content,
+            first_sentence=first_sentence,
+            metadata=metadata,
+            entities=entities,
+        )
+        zero_click_score = self._score_zero_click(zero_click_sentence, metadata)
+
+        # 3. Use zero-click sentence as the canonical description
         enriched_meta = {
             **metadata,
-            "description": first_sentence,
+            "description": zero_click_sentence or first_sentence,
             "keywords": missing_topics[:10],
         }
 
-        # 3. Build JSON-LD schema for the requested type
+        # 4. Build JSON-LD schema for the requested type
         jsonld = self._build_jsonld(
             schema_type=schema_type,
             content=content,
@@ -182,13 +196,13 @@ class SchemaBuilder:
             meta=enriched_meta,
         )
 
-        # 4. Collect all sameAs URLs from entities
+        # 5. Collect all sameAs URLs from entities
         all_same_as: list[str] = []
         for entity in entities:
             all_same_as.extend(entity.build_same_as())
         all_same_as = list(dict.fromkeys(all_same_as))
 
-        # 5. Add sameAs to Organisation/Article schemas
+        # 6. Add sameAs to Organisation/Article schemas
         if entities and schema_type in (
             SchemaType.ARTICLE.value,
             SchemaType.WEB_PAGE.value,
@@ -197,17 +211,17 @@ class SchemaBuilder:
         elif schema_type == SchemaType.ORGANISATION.value and entities:
             jsonld["sameAs"] = all_same_as
 
-        # 6. Generate metadata bundle
+        # 7. Generate metadata bundle
         meta_bundle = self._metadata.generate(
             content=content,
             metadata=enriched_meta,
         )
 
-        # 7. Build ontology from entities + missing topics
+        # 8. Build ontology from entities + missing topics
         all_topics = [e.name for e in entities] + missing_topics
         ontology = self._ontology.build_from_topics(all_topics)
 
-        # 8. Score citation readiness
+        # 9. Score citation readiness
         citation_score = self._score_citation_readiness(
             content=content,
             jsonld=jsonld,
@@ -215,7 +229,7 @@ class SchemaBuilder:
             first_sentence=first_sentence,
         )
 
-        # 9. Persist to database
+        # 10. Persist to database
         bundle = SchemaBundle(
             document_id=document_id,
             tenant_id=tenant_id,
@@ -230,6 +244,8 @@ class SchemaBuilder:
             same_as_urls=all_same_as,
             citation_score=citation_score,
             script_tag=self._jsonld.to_script_tag(jsonld),
+            zero_click_score=zero_click_score,
+            zero_click_sentence=zero_click_sentence,
         )
 
         await self._persist(bundle)
@@ -241,6 +257,7 @@ class SchemaBuilder:
             entities=len(entities),
             same_as_count=len(all_same_as),
             citation_score=round(citation_score, 2),
+            zero_click_score=round(zero_click_score, 2),
         )
         return bundle
 
@@ -304,6 +321,157 @@ class SchemaBuilder:
         return True
 
     # ─────────────────────────────────────────────
+    # Zero-Click Content Design
+    # ─────────────────────────────────────────────
+
+    def _build_zero_click_sentence(
+        self,
+        content: str,
+        first_sentence: str,
+        metadata: dict,
+        entities: list[GEOEntity],
+    ) -> str:
+        """
+        Build a zero-click optimised sentence for AI chat interfaces.
+
+        Zero-Click Design principle:
+          Even if the user never clicks through to the page, the AI response
+          surfaces the brand name and unique value proposition directly in the
+          chat window. This requires the very first sentence surfaced in any
+          AI citation to follow the pattern:
+
+            "{Brand} {is/provides/offers} {specific value} — {proof point}."
+
+          Examples:
+            ✓ "Tek Juice is a multi-channel inventory platform that syncs stock
+               across Shopify, Amazon, and TikTok Shop in real time."
+            ✓ "DataEngine provides AI-ready structured data pipelines that
+               reduce content indexing latency by 60%."
+            ✗ "Learn how our platform can help your business grow." (no brand,
+               no specifics)
+
+        The method attempts four sources in priority order:
+          1. Explicit brand + description in metadata
+          2. First compliant sentence already containing the brand
+          3. Constructed sentence from entity + existing first_sentence
+          4. Original first_sentence unchanged
+        """
+        brand = (
+            metadata.get("brand_name")
+            or metadata.get("publisher")
+            or metadata.get("author")
+            or settings.app_name
+        )
+        uvp = metadata.get("uvp") or metadata.get("value_proposition") or ""
+
+        # Priority 1: explicit brand + UVP in metadata
+        if brand and uvp:
+            candidate = f"{brand} {uvp}"
+            if self._is_zero_click_compliant(candidate, brand):
+                return candidate[:300]
+
+        # Priority 2: existing first_sentence already mentions brand
+        if brand and brand.lower() in first_sentence.lower():
+            if self._is_zero_click_compliant(first_sentence, brand):
+                return first_sentence[:300]
+
+        # Priority 3: construct from organisation entity + first_sentence
+        org_entities = [
+            e for e in entities
+            if e.entity_type.lower() in ("organisation", "organization")
+        ]
+        if org_entities:
+            org = org_entities[0]
+            constructed = f"{org.name} — {first_sentence}"
+            if len(constructed.split()) <= 50:
+                return constructed[:300]
+            # Trim to 40 words
+            words = constructed.split()[:40]
+            return " ".join(words) + "."
+
+        # Priority 4: prepend brand to first_sentence if not present
+        if brand and brand.lower() not in first_sentence.lower():
+            candidate = f"{brand}: {first_sentence}"
+            if len(candidate) <= 300:
+                return candidate
+
+        return first_sentence[:300]
+
+    @staticmethod
+    def _is_zero_click_compliant(sentence: str, brand: str) -> bool:
+        """
+        Check if a sentence satisfies zero-click design requirements:
+          - Contains the brand name
+          - Is direct and specific (not vague)
+          - Is at least 20 characters
+        """
+        if not sentence or len(sentence) < 20:
+            return False
+        if brand and brand.lower() not in sentence.lower():
+            return False
+        non_compliant_starters = (
+            "learn how", "discover", "find out", "click here",
+            "we offer", "welcome", "our services", "in this",
+        )
+        lower = sentence.lower().strip()
+        if any(lower.startswith(s) for s in non_compliant_starters):
+            return False
+        return True
+
+    @staticmethod
+    def _score_zero_click(sentence: str, metadata: dict) -> float:
+        """
+        Score a zero-click sentence on a 0.0–1.0 scale.
+
+        Criteria:
+          - Brand name present      (+0.30)
+          - UVP/value present       (+0.25) — verb + specific noun
+          - Proof point present     (+0.20) — number, stat, or named feature
+          - Length optimal 15–50w   (+0.15)
+          - Not a filler opener     (+0.10)
+        """
+        if not sentence:
+            return 0.0
+
+        score = 0.0
+        brand = (
+            metadata.get("brand_name")
+            or metadata.get("publisher")
+            or metadata.get("author")
+            or ""
+        )
+        words = sentence.split()
+
+        # Brand present
+        if brand and brand.lower() in sentence.lower():
+            score += 0.30
+
+        # Contains a value verb (is, provides, offers, enables, delivers, etc.)
+        value_verbs = (
+            " is ", " are ", " provides ", " offers ", " enables ",
+            " delivers ", " powers ", " helps ", " gives ", " builds ",
+        )
+        if any(v in f" {sentence.lower()} " for v in value_verbs):
+            score += 0.25
+
+        # Proof point (number, %, named feature)
+        if re.search(r'\b\d+(?:\.\d+)?(?:%|x|\s?times|k|m|b)?\b', sentence, re.IGNORECASE):
+            score += 0.20
+        elif re.search(r'\b(?:real.?time|instant|automated|ai-powered|enterprise)\b', sentence, re.IGNORECASE):
+            score += 0.10
+
+        # Optimal length
+        if 15 <= len(words) <= 50:
+            score += 0.15
+
+        # Not a filler opener
+        filler = ("learn how", "discover", "click here", "in this", "welcome")
+        if not any(sentence.lower().startswith(f) for f in filler):
+            score += 0.10
+
+        return round(min(1.0, score), 3)
+
+    # ─────────────────────────────────────────────
     # JSON-LD builders per schema type
     # ─────────────────────────────────────────────
 
@@ -324,6 +492,9 @@ class SchemaBuilder:
             SchemaType.WEB_PAGE.value:             self._build_web_page,
             SchemaType.DATASET.value:              self._build_dataset,
             SchemaType.SOFTWARE_APPLICATION.value: self._build_software_app,
+            # VSEO multi-modal types
+            SchemaType.IMAGE_OBJECT.value:         self._build_image_object,
+            SchemaType.VIDEO_OBJECT.value:         self._build_video_object,
         }
         builder = builders.get(schema_type, self._build_article)
         return builder(content=content, entities=entities, meta=meta)
@@ -342,12 +513,12 @@ class SchemaBuilder:
             "inLanguage":    meta.get("language", "en"),
             "keywords":      meta.get("keywords", []),
             "author": {
-                "@type": "Organisation",
+                "@type": "Organization",
                 "name":  meta.get("author", settings.app_name),
                 "url":   meta.get("author_url", ""),
             },
             "publisher": {
-                "@type": "Organisation",
+                "@type": "Organization",
                 "name":  meta.get("publisher", settings.app_name),
                 "url":   meta.get("publisher_url", ""),
                 "logo":  {
@@ -474,7 +645,7 @@ class SchemaBuilder:
 
         schema: dict[str, Any] = {
             "@context":    SCHEMA_ORG_CONTEXT,
-            "@type":       "Organisation",
+            "@type":       "Organization",
             "name":        meta.get("name", self._first_line(content)),
             "description": meta.get("description", content[:300]),
             "url":         meta.get("url", ""),
@@ -529,7 +700,7 @@ class SchemaBuilder:
             "dateModified": datetime.now(UTC).strftime("%Y-%m-%d"),
             "license":     meta.get("license", "https://creativecommons.org/licenses/by/4.0/"),
             "creator": {
-                "@type": "Organisation",
+                "@type": "Organization",
                 "name":  meta.get("creator", settings.app_name),
             },
             "keywords": meta.get("keywords", []),
@@ -555,6 +726,64 @@ class SchemaBuilder:
                 "price":         meta["price"],
                 "priceCurrency": meta.get("currency", "USD"),
             }
+        return schema
+
+    def _build_image_object(
+        self, content: str, entities: list[GEOEntity], meta: dict
+    ) -> dict[str, Any]:
+        """
+        Build a Schema.org ImageObject for VSEO multi-modal indexing.
+        meta keys: url, content_url, caption, width, height, author, license_url
+        """
+        schema: dict[str, Any] = {
+            "@context":   SCHEMA_ORG_CONTEXT,
+            "@type":      "ImageObject",
+            "url":        meta.get("url", ""),
+            "description": meta.get("description", content[:200]),
+            "dateModified": datetime.now(UTC).strftime("%Y-%m-%d"),
+        }
+        if meta.get("content_url"):
+            schema["contentUrl"] = meta["content_url"]
+        if meta.get("caption"):
+            schema["caption"] = meta["caption"]
+        if meta.get("width"):
+            schema["width"] = meta["width"]
+        if meta.get("height"):
+            schema["height"] = meta["height"]
+        if meta.get("author"):
+            schema["author"] = {"@type": "Person", "name": meta["author"]}
+        if meta.get("license_url"):
+            schema["license"] = meta["license_url"]
+        return schema
+
+    def _build_video_object(
+        self, content: str, entities: list[GEOEntity], meta: dict
+    ) -> dict[str, Any]:
+        """
+        Build a Schema.org VideoObject with Clip entities for VSEO.
+        meta keys: url, name, thumbnail_url, duration, upload_date,
+                   embed_url, transcript, author
+        """
+        schema: dict[str, Any] = {
+            "@context":   SCHEMA_ORG_CONTEXT,
+            "@type":      "VideoObject",
+            "name":       meta.get("name", self._first_line(content)),
+            "description": meta.get("description", content[:300]),
+            "uploadDate": meta.get("upload_date", datetime.now(UTC).strftime("%Y-%m-%d")),
+            "dateModified": datetime.now(UTC).strftime("%Y-%m-%d"),
+        }
+        if meta.get("url"):
+            schema["url"] = meta["url"]
+        if meta.get("thumbnail_url"):
+            schema["thumbnailUrl"] = meta["thumbnail_url"]
+        if meta.get("duration"):
+            schema["duration"] = meta["duration"]          # ISO 8601 e.g. PT2M30S
+        if meta.get("embed_url"):
+            schema["embedUrl"] = meta["embed_url"]
+        if meta.get("author"):
+            schema["author"] = {"@type": "Person", "name": meta["author"]}
+        if meta.get("transcript"):
+            schema["transcript"] = meta["transcript"][:5000]
         return schema
 
     # ─────────────────────────────────────────────
@@ -721,13 +950,15 @@ class SchemaBuilder:
                         "schema_type": bundle.schema_type,
                         "content":     json.dumps(bundle.jsonld),
                         "metadata": json.dumps({
-                            "first_sentence":  bundle.first_sentence,
-                            "same_as_urls":    bundle.same_as_urls,
-                            "citation_score":  bundle.citation_score,
-                            "geo_entities":    bundle.geo_entities,
-                            "open_graph":      bundle.open_graph,
-                            "twitter_card":    bundle.twitter_card,
-                        }),
+                                    "first_sentence":       bundle.first_sentence,
+                                    "zero_click_sentence":  bundle.zero_click_sentence,
+                                    "zero_click_score":     bundle.zero_click_score,
+                                    "same_as_urls":         bundle.same_as_urls,
+                                    "citation_score":       bundle.citation_score,
+                                    "geo_entities":         bundle.geo_entities,
+                                    "open_graph":           bundle.open_graph,
+                                    "twitter_card":         bundle.twitter_card,
+                                }),
                     },
                 )
                 await session.commit()

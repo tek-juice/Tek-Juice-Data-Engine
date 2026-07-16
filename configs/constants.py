@@ -141,6 +141,9 @@ class SchemaType(str, Enum):
     WEB_PAGE = "WebPage"
     DATASET = "Dataset"
     SOFTWARE_APPLICATION = "SoftwareApplication"
+    # Multi-modal (VSEO)
+    IMAGE_OBJECT = "ImageObject"
+    VIDEO_OBJECT = "VideoObject"
 
 
 SCHEMA_ORG_CONTEXT = "https://schema.org"

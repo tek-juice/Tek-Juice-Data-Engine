@@ -20,6 +20,8 @@ celery_app = Celery(
         "workers.celery.tasks.gap_tasks",
         "workers.celery.tasks.scraper_tasks",
         "workers.celery.tasks.sync_tasks",
+        "workers.celery.tasks.aeo_tasks",
+        "workers.celery.tasks.seo_tasks",
     ],
 )
 
@@ -52,9 +54,25 @@ celery_app.conf.update(
             "schedule": settings.scraper_interval_seconds,
             "kwargs": {"sources": ["google", "bing", "news", "social_media"]},
         },
+        "embed-scraped-trends-hourly": {
+            "task": "tasks.embed_scraped_trends",
+            "schedule": settings.scraper_interval_seconds,
+        },
         "run-gap-analysis-6h": {
             "task": "tasks.run_gap_analysis_batch",
             "schedule": 21600,  # 6 hours
+        },
+        "run-aeo-batch-6h": {
+            "task": "tasks.run_aeo_analysis_batch",
+            "schedule": 21600,  # 6 hours
+        },
+        "track-keyword-rankings-daily": {
+            "task": "tasks.track_keyword_rankings",
+            "schedule": settings.rank_tracking_interval_seconds,
+        },
+        "track-domain-authority-daily": {
+            "task": "tasks.track_domain_authority",
+            "schedule": settings.authority_tracking_interval_seconds,
         },
         "sync-data-pool-15m": {
             "task": "tasks.sync_data_pool",

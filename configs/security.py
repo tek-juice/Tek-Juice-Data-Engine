@@ -9,6 +9,8 @@ import string
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import hashlib
+
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -162,6 +164,19 @@ def set_tenant_context_sql(tenant_id: str) -> str:
 
 
 # ── CORS Helpers 
+
+# ── API Key Hashing
+
+def hash_api_key(api_key: str) -> str:
+    """
+    Hash an API key for secure storage using SHA-256.
+    Mirrors shared.utils.hashing.hash_api_key — re-exported here so callers
+    can import from a single configs.security namespace.
+    """
+    return hashlib.sha256(api_key.encode()).hexdigest()
+
+
+# ── CORS Helpers
 
 def get_cors_origins() -> list[str]:
     """Return allowed CORS origins from settings."""
