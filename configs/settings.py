@@ -4,15 +4,22 @@ Loaded via pydantic-settings from environment variables / .env file.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# .env.local overrides .env when running outside Docker (python run.py / local dev).
+# Inside Docker containers .env.local won't exist, so only .env is loaded.
+_ENV_FILES = [".env"]
+if Path(".env.local").exists():
+    _ENV_FILES.append(".env.local")
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES,          # later files override earlier ones
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

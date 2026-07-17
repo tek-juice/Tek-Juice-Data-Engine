@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import os
 import socket
+import os
 import subprocess
 import sys
 import time
@@ -87,6 +88,9 @@ ALIASES: dict[str, str] = {
 
 ROOT = Path(__file__).parent
 PYTHON = str(ROOT / ".venv" / "bin" / "python")
+
+# Always run from the project root so .env and .env.local are found correctly
+os.chdir(ROOT)
 
 # ── .env.local loader ────────────────────────────────────────────────────────
 # When a .env.local file exists (local dev, outside Docker), its values are
