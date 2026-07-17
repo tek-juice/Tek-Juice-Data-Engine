@@ -66,10 +66,14 @@ def _get_engine() -> AsyncEngine:
     """Return the shared engine, creating it on first call."""
     global _engine
     if _engine is None:
-        # Import here so settings are read AFTER all env vars are loaded
+        import logging
         from configs.settings import get_settings
         s = get_settings()
-        _engine = create_async_engine(s.database_url, **_build_engine_kwargs(s))
+        url = s.database_url
+        # Log the URL (password masked) so startup issues are immediately visible
+        masked = url.replace(s.postgres_password, "***")
+        logging.getLogger("database").info("Building database engine → %s", masked)
+        _engine = create_async_engine(url, **_build_engine_kwargs(s))
     return _engine
 
 
