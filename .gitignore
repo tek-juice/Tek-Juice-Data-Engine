@@ -14,4 +14,5 @@ storage/
 
 # PgBouncer — contains hashed credentials, never commit
 infrastructure/pgbouncer/userlist.txt
+infrastructure/docker/pgbouncer_userlist.txt
 .env.local

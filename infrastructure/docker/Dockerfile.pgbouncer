@@ -1,0 +1,19 @@
+FROM alpine:3.20
+
+# Create user first, then install pgbouncer so the package's pre-install
+# hook finds it already present (Alpine 3.20 defers adduser to post-install).
+RUN addgroup -S pgbouncer && adduser -S -G pgbouncer pgbouncer
+
+RUN apk add --no-cache pgbouncer~=1.22 su-exec \
+    && mkdir -p /etc/pgbouncer /var/log/pgbouncer /var/run/pgbouncer \
+    && chown -R pgbouncer:pgbouncer /etc/pgbouncer /var/log/pgbouncer /var/run/pgbouncer
+
+COPY pgbouncer.ini          /etc/pgbouncer/pgbouncer.ini
+COPY pgbouncer_userlist.txt /etc/pgbouncer/userlist.txt
+
+RUN chown pgbouncer:pgbouncer /etc/pgbouncer/pgbouncer.ini /etc/pgbouncer/userlist.txt \
+    && chmod 640 /etc/pgbouncer/pgbouncer.ini /etc/pgbouncer/userlist.txt
+
+EXPOSE 6432
+
+CMD ["su-exec", "pgbouncer", "pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
