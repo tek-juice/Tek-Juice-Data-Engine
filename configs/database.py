@@ -2,12 +2,27 @@
 DATA ENGINE — Database Configuration
 SQLAlchemy async engine, session factory, and base model setup.
 Includes PGVector extension registration.
+
+IMPORTANT — lazy initialisation
+---------------------------------
+The engine and session factory are created on first use (not at import time).
+This ensures Docker environment variable overrides (PGBOUNCER_HOST etc.) are
+fully applied before the database URL is read from settings.
+
+All public names (engine, AsyncSessionLocal) are replaced by module-level
+properties via a thin accessor pattern so existing import sites keep working:
+
+    from configs.database import get_db_session, init_db, check_db_health
+    from configs.database import engine          # works, returns lazy engine
+    from configs.database import AsyncSessionLocal  # works
 """
+
+from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from sqlalchemy import event, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,94 +30,122 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
-
-from configs.settings import get_settings
-
-settings = get_settings()
+from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
 
 
-# ── Engine Factory
+# ── Lazy engine & session factory ─────────────────────────────────────────────
+# Stored as module-level variables but only populated on first use.
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker | None = None
 
-def _build_engine_kwargs() -> dict[str, Any]:
-    """Build engine kwargs based on environment."""
+
+def _build_engine_kwargs(settings: Any) -> dict[str, Any]:
+    """Build SQLAlchemy engine kwargs from settings."""
     base: dict[str, Any] = {
-        "echo": settings.postgres_echo,
+        "echo":   settings.postgres_echo,
         "future": True,
     }
     if settings.pgbouncer_enabled:
-        # PgBouncer transaction mode requires NullPool — SQLAlchemy must NOT
-        # maintain its own connection pool since PgBouncer manages pooling.
-        # Using QueuePool with PgBouncer transaction mode causes "prepared
-        # statement does not exist" and connection exhaustion errors.
+        # PgBouncer transaction mode — SQLAlchemy must NOT pool connections.
         base["poolclass"] = NullPool
     elif settings.is_production:
-        base.update(
-            {
-                "poolclass": AsyncAdaptedQueuePool,
-                "pool_size": settings.postgres_pool_size,
-                "max_overflow": settings.postgres_max_overflow,
-                "pool_timeout": settings.postgres_pool_timeout,
-                "pool_pre_ping": True,
-                "pool_recycle": 3600,
-            }
-        )
+        base.update({
+            "poolclass":    AsyncAdaptedQueuePool,
+            "pool_size":    settings.postgres_pool_size,
+            "max_overflow": settings.postgres_max_overflow,
+            "pool_timeout": settings.postgres_pool_timeout,
+            "pool_pre_ping": True,
+            "pool_recycle": 3600,
+        })
     else:
-        # Development without PgBouncer — NullPool avoids connection leaks
         base["poolclass"] = NullPool
-
     return base
 
 
-engine: AsyncEngine = create_async_engine(
-    settings.database_url,
-    **_build_engine_kwargs(),
-)
-
-# Session factory — expire_on_commit=False keeps objects usable after commit
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False,
-    autocommit=False,
-)
+def _get_engine() -> AsyncEngine:
+    """Return the shared engine, creating it on first call."""
+    global _engine
+    if _engine is None:
+        # Import here so settings are read AFTER all env vars are loaded
+        from configs.settings import get_settings
+        s = get_settings()
+        _engine = create_async_engine(s.database_url, **_build_engine_kwargs(s))
+    return _engine
 
 
-# ── Base Model 
+def _get_session_factory() -> async_sessionmaker:
+    """Return the shared session factory, creating it on first call."""
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(
+            bind=_get_engine(),
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+            autocommit=False,
+        )
+    return _session_factory
+
+
+# ── Backward-compatible module-level accessors ────────────────────────────────
+# Code that does `from configs.database import engine` or
+# `from configs.database import AsyncSessionLocal` still works.
+
+class _LazyEngine:
+    """Proxy that forwards attribute access to the real engine."""
+    def __getattr__(self, name: str):
+        return getattr(_get_engine(), name)
+
+    # Forward the two most common call patterns
+    def begin(self):
+        return _get_engine().begin()
+
+    def connect(self):
+        return _get_engine().connect()
+
+    async def dispose(self):
+        return await _get_engine().dispose()
+
+
+class _LazySessionFactory:
+    """Proxy that forwards calls to the real session factory."""
+    def __call__(self, *args, **kwargs):
+        return _get_session_factory()(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(_get_session_factory(), name)
+
+
+engine: AsyncEngine = _LazyEngine()           # type: ignore[assignment]
+AsyncSessionLocal = _LazySessionFactory()
+
+
+# ── Base Model ────────────────────────────────────────────────────────────────
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialise model to dictionary."""
         return {
-            column.name: getattr(self, column.name)
-            for column in self.__table__.columns
+            col.name: getattr(self, col.name)
+            for col in self.__table__.columns
         }
 
 
-# ── PGVector Extension 
+# ── PGVector Extension ────────────────────────────────────────────────────────
 
 async def enable_pgvector(conn: Any) -> None:
-    """Enable the pgvector extension if not already present."""
+    """Enable vector, pg_trgm, and pgcrypto extensions."""
     await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
 
 
-# ── Session Dependency
+# ── Session Dependency ────────────────────────────────────────────────────────
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """
-    FastAPI dependency that yields an async database session.
-
-    Usage:
-        @router.get("/items")
-        async def get_items(db: AsyncSession = Depends(get_db_session)):
-            ...
-    """
-    async with AsyncSessionLocal() as session:
+    """FastAPI dependency — yields a managed async database session."""
+    async with _get_session_factory()() as session:
         try:
             yield session
             await session.commit()
@@ -113,32 +156,27 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-# ── Database Lifecycle 
+# ── Database Lifecycle ────────────────────────────────────────────────────────
 
 async def init_db() -> None:
-    """
-    Initialise the database — enables extensions and creates all tables.
-    Called once at application startup.
-    """
-    async with engine.begin() as conn:
+    """Enable extensions and create all tables. Called at app startup."""
+    async with _get_engine().begin() as conn:
         await enable_pgvector(conn)
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def dispose_db() -> None:
-    """
-    Dispose the engine connection pool.
-    Called at application shutdown.
-    """
-    await engine.dispose()
+    """Dispose the engine connection pool. Called at app shutdown."""
+    if _engine is not None:
+        await _engine.dispose()
 
 
-# ── Health Check 
+# ── Health Check ──────────────────────────────────────────────────────────────
 
 async def check_db_health() -> bool:
-    """Return True if database is reachable and responding."""
+    """Return True if the database is reachable."""
     try:
-        async with AsyncSessionLocal() as session:
+        async with _get_session_factory()() as session:
             await session.execute(text("SELECT 1"))
         return True
     except Exception:

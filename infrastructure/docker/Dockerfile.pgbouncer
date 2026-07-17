@@ -4,7 +4,7 @@ FROM alpine:3.20
 # hook finds it already present (Alpine 3.20 defers adduser to post-install).
 RUN addgroup -S pgbouncer && adduser -S -G pgbouncer pgbouncer
 
-RUN apk add --no-cache pgbouncer~=1.22 su-exec \
+RUN apk add --no-cache pgbouncer~=1.22 su-exec netcat-openbsd \
     && mkdir -p /etc/pgbouncer /var/log/pgbouncer /var/run/pgbouncer \
     && chown -R pgbouncer:pgbouncer /etc/pgbouncer /var/log/pgbouncer /var/run/pgbouncer
 

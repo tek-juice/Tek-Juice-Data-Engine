@@ -3,7 +3,6 @@ DATA ENGINE — Central Application Settings
 Loaded via pydantic-settings from environment variables / .env file.
 """
 
-from functools import lru_cache
 from pathlib import Path
 from typing import List, Literal
 
@@ -253,11 +252,33 @@ class Settings(BaseSettings):
         return self.app_env == "development"
 
 
-@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return cached settings instance. Use this in FastAPI dependencies."""
+    """
+    Return a Settings instance.
+
+    NO lru_cache here — caching at module level causes the database URL
+    to be baked in before Docker environment variable overrides are applied,
+    resulting in socket.gaierror when containers start.
+
+    FastAPI's Depends() already caches the result per-request scope.
+    For code that calls get_settings() in a tight loop, the Settings
+    constructor is cheap (env vars are already in os.environ by the time
+    the app starts, so pydantic-settings just reads them once).
+    """
     return Settings()
 
 
-# Module-level singleton for non-DI usage
-settings = get_settings()
+# Module-level singleton — lazily evaluated so Docker env vars are present.
+# Import this anywhere you need settings outside of FastAPI DI:
+#   from configs.settings import settings
+class _LazySettings:
+    """Defers Settings() construction until first attribute access."""
+    _instance: Settings | None = None
+
+    def __getattr__(self, name: str):
+        if self._instance is None:
+            object.__setattr__(self, "_instance", Settings())
+        return getattr(self._instance, name)
+
+
+settings: Settings = _LazySettings()  # type: ignore[assignment]
