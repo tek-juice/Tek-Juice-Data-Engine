@@ -34,7 +34,7 @@ services:
     networks:
       - data_engine_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-data_engine_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-data_engine_user} -d ${POSTGRES_DB:-data_engine}"]
       interval: 10s
       timeout: 5s
       retries: 5
