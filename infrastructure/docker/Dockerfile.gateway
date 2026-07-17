@@ -18,7 +18,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 # Copy application source
 COPY configs/ ./configs/
 COPY shared/ ./shared/
+COPY services/__init__.py ./services/__init__.py
 COPY services/api_gateway/ ./services/api_gateway/
+COPY services/synchronization/ ./services/synchronization/
 
 # Create non-root user
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser

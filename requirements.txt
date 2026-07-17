@@ -46,7 +46,7 @@ spacy==3.7.5
 # Transformer NER model (GPU-optional; CPU-only if torch CPU build)
 # Install model after pip install: python -m spacy download en_core_web_trf
 # Fallback model:                  python -m spacy download en_core_web_sm
-spacy-transformers==1.3.5
+spacy-transformers==1.3.8
 sentence-transformers==3.0.1
 transformers==4.41.2
 torch==2.3.1

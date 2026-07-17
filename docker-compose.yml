@@ -46,16 +46,17 @@ services:
   # Prevents connection exhaustion when Celery scales to 16+ workers.
   # All services connect to pgbouncer:6432, NOT postgres:5432.
   pgbouncer:
-    image: bitnami/pgbouncer:1.22.1
+    image: pgbouncer/pgbouncer:latest
+    platform: linux/amd64
     container_name: data_engine_pgbouncer
     restart: unless-stopped
     environment:
-      POSTGRESQL_HOST:         postgres
-      POSTGRESQL_PORT:         5432
-      POSTGRESQL_DATABASE:     ${POSTGRES_DB:-data_engine}
-      POSTGRESQL_USERNAME:     ${POSTGRES_USER:-data_engine_user}
-      POSTGRESQL_PASSWORD:     ${POSTGRES_PASSWORD:-password}
-      PGBOUNCER_PORT:          6432
+      DATABASES_HOST:          postgres
+      DATABASES_PORT:          5432
+      DATABASES_DBNAME:        ${POSTGRES_DB:-data_engine}
+      DATABASES_USER:          ${POSTGRES_USER:-data_engine_user}
+      DATABASES_PASSWORD:      ${POSTGRES_PASSWORD:-password}
+      PGBOUNCER_LISTEN_PORT:   6432
       PGBOUNCER_POOL_MODE:     transaction
       PGBOUNCER_MAX_CLIENT_CONN: 200
       PGBOUNCER_DEFAULT_POOL_SIZE: 20
@@ -64,8 +65,8 @@ services:
       PGBOUNCER_RESERVE_POOL_TIMEOUT: 3
       PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
       PGBOUNCER_SERVER_LIFETIME: 3600
-      PGBOUNCER_LOG_CONNECTIONS: yes
-      PGBOUNCER_LOG_DISCONNECTIONS: yes
+      PGBOUNCER_LOG_CONNECTIONS: 1
+      PGBOUNCER_LOG_DISCONNECTIONS: 1
     ports:
       - "${PGBOUNCER_PORT:-6432}:6432"
     depends_on:
@@ -74,10 +75,11 @@ services:
     networks:
       - data_engine_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -p 6432 -U ${POSTGRES_USER:-data_engine_user}"]
+      test: ["CMD-SHELL", "nc -z -w1 localhost 6432"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 15s
 
   # ── Redis ─────────────────────────────────
   redis:
