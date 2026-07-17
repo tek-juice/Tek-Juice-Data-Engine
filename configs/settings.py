@@ -10,11 +10,14 @@ from typing import List, Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Resolve paths relative to this file — works regardless of working directory
+_ROOT = Path(__file__).resolve().parent.parent   # project root
+_ENV = _ROOT / ".env"
+_ENV_LOCAL = _ROOT / ".env.local"
+
 # .env.local overrides .env when running outside Docker (python run.py / local dev).
 # Inside Docker containers .env.local won't exist, so only .env is loaded.
-_ENV_FILES = [".env"]
-if Path(".env.local").exists():
-    _ENV_FILES.append(".env.local")
+_ENV_FILES = [str(_ENV)] + ([str(_ENV_LOCAL)] if _ENV_LOCAL.exists() else [])
 
 
 class Settings(BaseSettings):
