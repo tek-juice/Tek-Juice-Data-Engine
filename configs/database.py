@@ -63,31 +63,26 @@ def _build_engine_kwargs(settings: Any) -> dict[str, Any]:
 
 
 def _get_engine() -> AsyncEngine:
-    """Return the shared engine, creating it on first call."""
+    """Return the shared engine, building it fresh on every call."""
     global _engine
-    if _engine is None:
-        import logging
-        from configs.settings import get_settings
-        s = get_settings()
-        url = s.database_url
-        # Log the URL (password masked) so startup issues are immediately visible
-        masked = url.replace(s.postgres_password, "***")
-        logging.getLogger("database").info("Building database engine → %s", masked)
-        _engine = create_async_engine(url, **_build_engine_kwargs(s))
+    from configs.settings import get_settings
+    s = get_settings()
+    url = s.database_url
+    from sqlalchemy.pool import NullPool
+    _engine = create_async_engine(url, echo=False, future=True, poolclass=NullPool)
     return _engine
 
 
 def _get_session_factory() -> async_sessionmaker:
-    """Return the shared session factory, creating it on first call."""
+    """Return the shared session factory, always rebuilt from current engine."""
     global _session_factory
-    if _session_factory is None:
-        _session_factory = async_sessionmaker(
-            bind=_get_engine(),
-            class_=AsyncSession,
-            expire_on_commit=False,
-            autoflush=False,
-            autocommit=False,
-        )
+    _session_factory = async_sessionmaker(
+        bind=_get_engine(),
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
     return _session_factory
 
 

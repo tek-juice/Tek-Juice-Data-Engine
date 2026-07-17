@@ -38,12 +38,16 @@ async def lifespan(app: FastAPI):
     logger.info("api_gateway_stopped")
 
 
+# Read settings once here — at module load time these values are fine
+# because they don't affect DB connection (only CORS origins and docs URL)
+_settings = get_settings()
+
 app = FastAPI(
     title=f"{APP_NAME} — API Gateway",
     description="Central API Gateway — authentication, routing, rate limiting.",
     version=APP_VERSION,
     lifespan=lifespan,
-    docs_url="/docs" if settings.is_development else None,
+    docs_url="/docs" if _settings.is_development else None,
     redoc_url=None,
 )
 
@@ -57,7 +61,7 @@ app.add_middleware(TenantContextMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.gateway_allowed_origins,
+    allow_origins=_settings.gateway_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

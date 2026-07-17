@@ -79,19 +79,24 @@ class Settings(BaseSettings):
         Returns the async database URL.
         Routes through PgBouncer when enabled (production/staging).
         Falls back to direct PostgreSQL for migrations and development.
+        Password is URL-encoded to handle special characters like @ # % etc.
         """
+        from urllib.parse import quote_plus
         host = self.pgbouncer_host if self.pgbouncer_enabled else self.postgres_host
         port = self.pgbouncer_port if self.pgbouncer_enabled else self.postgres_port
+        pw   = quote_plus(self.postgres_password)
         return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+asyncpg://{self.postgres_user}:{pw}"
             f"@{host}:{port}/{self.postgres_db}"
         )
 
     @property
     def sync_database_url(self) -> str:
         """Sync URL for Alembic migrations — always connects directly to PostgreSQL."""
+        from urllib.parse import quote_plus
+        pw = quote_plus(self.postgres_password)
         return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql://{self.postgres_user}:{pw}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
@@ -253,32 +258,17 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
-    """
-    Return a Settings instance.
-
-    NO lru_cache here — caching at module level causes the database URL
-    to be baked in before Docker environment variable overrides are applied,
-    resulting in socket.gaierror when containers start.
-
-    FastAPI's Depends() already caches the result per-request scope.
-    For code that calls get_settings() in a tight loop, the Settings
-    constructor is cheap (env vars are already in os.environ by the time
-    the app starts, so pydantic-settings just reads them once).
-    """
+    """Return a fresh Settings instance reading current environment variables."""
     return Settings()
 
 
-# Module-level singleton — lazily evaluated so Docker env vars are present.
-# Import this anywhere you need settings outside of FastAPI DI:
-#   from configs.settings import settings
+# Module-level singleton used across the codebase.
+# Never caches — always reads from os.environ so Docker overrides always apply.
 class _LazySettings:
-    """Defers Settings() construction until first attribute access."""
-    _instance: Settings | None = None
+    """Always-fresh settings proxy — no caching, no stale env values."""
 
     def __getattr__(self, name: str):
-        if self._instance is None:
-            object.__setattr__(self, "_instance", Settings())
-        return getattr(self._instance, name)
+        return getattr(Settings(), name)
 
 
 settings: Settings = _LazySettings()  # type: ignore[assignment]

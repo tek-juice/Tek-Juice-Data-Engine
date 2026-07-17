@@ -11,14 +11,17 @@ from configs.settings import get_settings
 from services.synchronization.cache import get_cache
 
 logger = structlog.get_logger(__name__)
-settings = get_settings()
 
-TIER_LIMITS = {
-    "standard":   settings.rate_limit_standard,
-    "premium":    settings.rate_limit_premium,
-    "enterprise": settings.rate_limit_premium * 5,
-    "internal":   999_999,
-}
+
+def _tier_limits() -> dict:
+    """Build tier limits from current settings — called lazily, never at import."""
+    s = get_settings()
+    return {
+        "standard":   s.rate_limit_standard,
+        "premium":    s.rate_limit_premium,
+        "enterprise": s.rate_limit_premium * 5,
+        "internal":   999_999,
+    }
 
 
 class RateLimiter:
@@ -38,8 +41,8 @@ class RateLimiter:
         Raises HTTP 429 if limit exceeded.
         Adds rate limit headers to the request state for response injection.
         """
-        limit = TIER_LIMITS.get(tier, settings.rate_limit_standard)
-        window = settings.rate_limit_window_seconds
+        limit = _tier_limits().get(tier, get_settings().rate_limit_standard)
+        window = get_settings().rate_limit_window_seconds
 
         identifier = tenant_id or request.client.host if request.client else "unknown"
         cache = await get_cache()

@@ -15,7 +15,6 @@ from configs.settings import get_settings
 from configs.constants import CACHE_TTL_SHORT, CACHE_TTL_MEDIUM, CACHE_TTL_LONG, CACHE_TTL_DAY
 
 logger = structlog.get_logger(__name__)
-settings = get_settings()
 
 
 class CacheManager:
@@ -26,7 +25,7 @@ class CacheManager:
 
     async def connect(self) -> None:
         self._client = await aioredis.from_url(
-            settings.redis_url,
+            get_settings().redis_url,
             encoding="utf-8",
             decode_responses=True,
         )
