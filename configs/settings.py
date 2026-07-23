@@ -80,6 +80,12 @@ class Settings(BaseSettings):
         Routes through PgBouncer when enabled (production/staging).
         Falls back to direct PostgreSQL for migrations and development.
         Password is URL-encoded to handle special characters like @ # % etc.
+
+        Query string params:
+          ssl=disable                       — PgBouncer uses plain auth inside Docker
+          prepared_statement_cache_size=0   — PgBouncer transaction mode does not
+                                              support prepared statements; disable
+                                              asyncpg's cache entirely.
         """
         from urllib.parse import quote_plus
         host = self.pgbouncer_host if self.pgbouncer_enabled else self.postgres_host
@@ -88,6 +94,7 @@ class Settings(BaseSettings):
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{pw}"
             f"@{host}:{port}/{self.postgres_db}"
+            f"?ssl=disable&prepared_statement_cache_size=0"
         )
 
     @property
@@ -120,9 +127,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     voyage_api_key: str = ""
     jina_api_key: str = ""
-    default_embedding_provider: Literal["openai", "gemini", "voyage", "jina"] = "openai"
-    default_embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    default_embedding_provider: Literal["openai", "gemini", "voyage", "jina"] = "gemini"
+    default_embedding_model: str = "text-embedding-004"
+    embedding_dimension: int = 768
     embedding_batch_size: int = 100
     embedding_max_retries: int = 5
 

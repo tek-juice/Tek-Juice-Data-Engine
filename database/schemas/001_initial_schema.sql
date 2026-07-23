@@ -139,10 +139,11 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 
 -- HNSW indexes per namespace — never mix dimensions in one index
+-- pgvector caps HNSW at 2000 dims; 768/1536/1024 use HNSW, 3072 uses IVFFlat.
 CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw_768  ON embeddings USING hnsw (embedding_768  vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_768  IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw_1536 ON embeddings USING hnsw (embedding_1536 vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_1536 IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw_1024 ON embeddings USING hnsw (embedding_1024 vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_1024 IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw_3072 ON embeddings USING hnsw (embedding_3072 vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE embedding_3072 IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_embeddings_ivfflat_3072 ON embeddings USING ivfflat (embedding_3072 vector_cosine_ops) WITH (lists = 100) WHERE embedding_3072 IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_embeddings_tenant_id   ON embeddings(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_document_id ON embeddings(document_id);

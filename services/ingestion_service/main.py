@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from prometheus_client import make_asgi_app
 from fastapi.middleware.cors import CORSMiddleware
 
 from configs.database import init_db, dispose_db
@@ -39,6 +40,8 @@ app = FastAPI(
     docs_url="/docs" if settings.is_development else None,
     redoc_url=None,
 )
+
+app.mount("/metrics", make_asgi_app())
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 app.add_middleware(AccessLogMiddleware)

@@ -1,12 +1,12 @@
 """
-DATA ENGINE — System-Wide Constants
+DATA ENGINE  System-Wide Constants
 Immutable values referenced across all services.
 """
 
 from enum import Enum
 
 
-# ── Application 
+#  Application 
 
 APP_NAME = "DATA ENGINE"
 APP_VERSION = "1.0.0"
@@ -15,7 +15,7 @@ HEALTH_ENDPOINT = "/health"
 METRICS_ENDPOINT = "/metrics"
 
 
-# ── Supported File Types 
+#  Supported File Types 
 class SourceType(str, Enum):
     PDF = "pdf"
     DOCX = "docx"
@@ -37,7 +37,7 @@ ALLOWED_MIME_TYPES: dict[str, SourceType] = {
 }
 
 
-# ── Embedding Providers 
+# Embedding Providers 
 
 class EmbeddingProvider(str, Enum):
     OPENAI = "openai"
@@ -68,7 +68,7 @@ EMBEDDING_MODELS: dict[str, dict[str, int]] = {
 }
 
 
-# ── Chunking 
+#  Chunking 
 
 class ChunkStrategy(str, Enum):
     TOKEN = "token"
@@ -83,7 +83,7 @@ DEFAULT_CHUNK_MAX = 512
 DEFAULT_CHUNK_OVERLAP = 64
 
 
-# ── Vector Search 
+#  Vector Search 
 
 class SimilarityMetric(str, Enum):
     COSINE = "cosine"
@@ -99,7 +99,7 @@ MAX_SIMILARITY_THRESHOLD = 1.0
 DEFAULT_SIMILARITY_THRESHOLD = 0.75
 
 
-# ── Document / Ingestion Status 
+#  Document / Ingestion Status 
 
 class DocumentStatus(str, Enum):
     QUEUED = "queued"
@@ -112,7 +112,7 @@ class DocumentStatus(str, Enum):
     DELETED = "deleted"
 
 
-# ── Gap Detection 
+#  Gap Detection 
 
 class GapSeverity(str, Enum):
     LOW = "low"
@@ -149,7 +149,7 @@ class SchemaType(str, Enum):
 SCHEMA_ORG_CONTEXT = "https://schema.org"
 
 
-# ── Telemetry Sources 
+#  Telemetry Sources 
 
 class TelemetrySource(str, Enum):
     GOOGLE = "google"
@@ -159,7 +159,7 @@ class TelemetrySource(str, Enum):
     RSS = "rss"
 
 
-# ── SEO / GEO / AEO 
+#  SEO / GEO / AEO 
 
 class MetadataFormat(str, Enum):
     OPEN_GRAPH = "opengraph"
@@ -178,7 +178,7 @@ class EntityType(str, Enum):
     TECHNOLOGY = "Technology"
 
 
-# ── AEO — Answer Engine Optimisation ─────────────────────────────────────────
+#  AEO — Answer Engine Optimisation 
 
 class AEOSnippetType(str, Enum):
     PARAGRAPH  = "paragraph"
@@ -244,7 +244,7 @@ AEO_WEIGHT_VOICE_READINESS   = 0.20
 TASK_RUN_AEO_ANALYSIS = "tasks.run_aeo_analysis"
 
 
-# ── HTTP / API 
+#  HTTP / API 
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
@@ -256,7 +256,7 @@ TENANT_ID_HEADER = "X-Tenant-ID"
 API_VERSION_HEADER = "X-API-Version"
 
 
-# ── Celery Task Names 
+#  Celery Task Names 
 
 TASK_INGEST_DOCUMENT     = "tasks.ingest_document"
 TASK_CHUNK_TEXT          = "tasks.chunk_text"
@@ -271,7 +271,7 @@ TASK_RUN_GEO_ANALYSIS    = "tasks.run_geo_analysis"
 TASK_RUN_AEO_ANALYSIS    = "tasks.run_aeo_analysis"
 
 
-# ── Cache TTLs (seconds) 
+#  Cache TTLs (seconds) 
 
 CACHE_TTL_SHORT = 60          # 1 minute
 CACHE_TTL_MEDIUM = 300        # 5 minutes
@@ -279,7 +279,7 @@ CACHE_TTL_LONG = 3600         # 1 hour
 CACHE_TTL_DAY = 86400         # 24 hours
 
 
-# ── Error Codes 
+#  Error Codes 
 
 class ErrorCode(str, Enum):
     VALIDATION_ERROR = "VALIDATION_ERROR"

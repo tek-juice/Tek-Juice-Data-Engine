@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import os
 import socket
-import os
 import subprocess
 import sys
 import time
@@ -99,6 +98,12 @@ os.chdir(ROOT)
 # .env.local overrides them to localhost for host-side development.
 
 def _load_env_local() -> None:
+    """Inject .env.local into os.environ so uvicorn subprocesses inherit it.
+
+    Uses direct assignment (not setdefault) so .env.local values always
+    override whatever the parent shell may have exported — this is the whole
+    point of the file (localhost overrides for local dev).
+    """
     env_local = ROOT / ".env.local"
     if not env_local.exists():
         return
@@ -108,7 +113,7 @@ def _load_env_local() -> None:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip())
+            os.environ[key.strip()] = value.strip()
 
 
 _load_env_local()
@@ -128,6 +133,18 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _pids_on_port(port: int) -> list[int]:
+    """Return PIDs of processes listening on the given port (macOS/Linux)."""
+    try:
+        import subprocess as _sp
+        out = _sp.check_output(
+            ["lsof", "-ti", f":{port}"], text=True, stderr=_sp.DEVNULL
+        )
+        return [int(p) for p in out.split() if p.strip().isdigit()]
+    except Exception:
+        return []
+
+
 def _start_service(key: str, open_browser: bool = True) -> None:
     svc    = SERVICES[key]
     port   = svc["port"]
@@ -135,14 +152,44 @@ def _start_service(key: str, open_browser: bool = True) -> None:
     url    = f"http://localhost:{port}/docs"
 
     if _port_in_use(port):
-        print(f"\n  ✗  Port {port} is already in use.")
-        print(f"     If the Docker container is running, open {url} directly,")
-        print(f"     or stop it first:  docker compose stop {key}\n")
-        sys.exit(1)
+        pids = _pids_on_port(port)
+        print(f"\n  ✗  Port {port} is already in use", end="")
+        if pids:
+            print(f" (PID {', '.join(str(p) for p in pids)}).")
+        else:
+            print(".")
+
+        # If it's a local Python/uvicorn process offer to kill it automatically
+        if pids:
+            answer = input("     Kill the stale process and continue? [Y/n] ").strip().lower()
+            if answer in ("", "y", "yes"):
+                import signal
+                for pid in pids:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                time.sleep(1)
+                if _port_in_use(port):
+                    for pid in pids:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    time.sleep(0.5)
+                print(f"     Killed. Starting {label}…")
+            else:
+                print(f"     If a Docker container is using it, open {url} directly,")
+                print(f"     or stop it:  docker compose stop {key}\n")
+                sys.exit(1)
+        else:
+            print(f"     If a Docker container is using it, open {url} directly,")
+            print(f"     or stop it:  docker compose stop {key}\n")
+            sys.exit(1)
 
     print(f"\n  ⚡ Starting {label} on port {port}")
     print(f"     Swagger UI → {url}")
-    print(f"     Press Ctrl+C to stop\n")
+    print("     Press Ctrl+C to stop\n")
 
     if open_browser:
         # Give uvicorn ~1.5 s to bind before opening the browser

@@ -10,6 +10,7 @@ ReDoc:      http://localhost:8009/redoc
 from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI, HTTPException, Body
+from prometheus_client import make_asgi_app
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Any
@@ -110,6 +111,8 @@ Returns ready-to-embed `<script type="application/ld+json">` tag for your HTML.
         {"name": "health", "description": "Service health"},
     ],
 )
+
+app.mount("/metrics", make_asgi_app())
 
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestIDMiddleware)

@@ -129,7 +129,7 @@ class EmbeddingUser(HttpUser):
         text = random.choice(SAMPLE_TEXTS)
         self.client.post(
             "/api/v1/embed",
-            json={"texts": [text], "provider": "openai"},
+            json={"texts": [text], "provider": "gemini"},
             headers=self.auth_headers,
             name="/api/v1/embed",
         )

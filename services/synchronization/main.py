@@ -9,6 +9,7 @@ ReDoc:      http://localhost:8010/redoc
 from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI, HTTPException, Body
+from prometheus_client import make_asgi_app
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -18,7 +19,7 @@ from configs.database import init_db, dispose_db
 from shared.exceptions.handlers import register_exception_handlers
 from shared.middleware.request_id import RequestIDMiddleware
 from shared.middleware.logging import AccessLogMiddleware
-from services.synchronization.sync import SyncManager
+from services.synchronization.sync import DataPoolSynchronizer as SyncManager
 from services.synchronization.cache import CacheManager
 
 settings = get_settings()
@@ -80,6 +81,8 @@ replication, and event broadcasting.
         {"name": "health", "description": "Service health"},
     ],
 )
+
+app.mount("/metrics", make_asgi_app())
 
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestIDMiddleware)

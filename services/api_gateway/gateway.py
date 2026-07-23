@@ -7,14 +7,13 @@ Handles authentication, rate limiting, routing, and health aggregation.
 from contextlib import asynccontextmanager
 
 import structlog
-import httpx
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 
 from configs.settings import get_settings
 from configs.constants import API_PREFIX, APP_VERSION, APP_NAME
-from configs.database import init_db, dispose_db, check_db_health
+from configs.database import init_db, dispose_db
 from shared.exceptions.handlers import register_exception_handlers
 from shared.middleware.request_id import RequestIDMiddleware
 from shared.middleware.logging import AccessLogMiddleware
@@ -22,8 +21,6 @@ from shared.middleware.tenant import TenantContextMiddleware
 from services.api_gateway.routers.auth_router import router as auth_router
 from services.api_gateway.routers.proxy_router import router as proxy_router
 from services.api_gateway.routers.health_router import router as health_router
-from services.api_gateway.authentication.api_key_manager import APIKeyManager
-from services.api_gateway.rate_limiting.rate_limiter import RateLimiter
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
@@ -32,7 +29,7 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("api_gateway_starting", version=APP_VERSION)
-    await init_db()
+    await init_db()   # schedules background task internally; returns immediately
     yield
     await dispose_db()
     logger.info("api_gateway_stopped")

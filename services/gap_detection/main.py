@@ -10,6 +10,7 @@ ReDoc:      http://localhost:8008/redoc
 from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI, HTTPException, Body, Depends
+from prometheus_client import make_asgi_app
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -114,6 +115,8 @@ Identifies topics and trends that are NOT covered in a document's embeddings.
         {"name": "health", "description": "Service health"},
     ],
 )
+
+app.mount("/metrics", make_asgi_app())
 
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestIDMiddleware)

@@ -9,18 +9,20 @@ ReDoc:      http://localhost:8004/redoc
 
 from contextlib import asynccontextmanager
 import structlog
-from fastapi import FastAPI, HTTPException, Body, Query
+from fastapi import Depends, FastAPI, HTTPException, Body, Query
+from prometheus_client import make_asgi_app
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.settings import get_settings
 from configs.constants import API_PREFIX, APP_VERSION
-from configs.database import init_db, dispose_db
+from configs.database import init_db, dispose_db, get_db_session
 from shared.exceptions.handlers import register_exception_handlers
 from shared.middleware.request_id import RequestIDMiddleware
 from shared.middleware.logging import AccessLogMiddleware
 from services.vector_vault.search import VectorSearch
-from services.vector_vault.pgvector import VectorStore
+from services.vector_vault.pgvector import PGVectorStore
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
@@ -108,33 +110,29 @@ Uses HNSW approximate nearest-neighbour index for sub-millisecond similarity sea
     ],
 )
 
+app.mount("/metrics", make_asgi_app())
+
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=settings.gateway_allowed_origins,
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 register_exception_handlers(app)
 
-_store = VectorStore()
-_search = VectorSearch()
-
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+# PGVectorStore and VectorSearch require an AsyncSession — inject per request.
 
 @app.post(f"{API_PREFIX}/vectors/store", tags=["vectors"],
           summary="Store an embedding vector")
-async def store_vector(request: StoreRequest = Body(...)):
+async def store_vector(
+    request: StoreRequest = Body(...),
+    db: AsyncSession = Depends(get_db_session),
+):
     """Store a single embedding vector into the correct namespace column."""
     try:
-        result = await _store.store(
-            chunk_id=request.chunk_id,
-            document_id=request.document_id,
-            tenant_id=request.tenant_id,
-            embedding=request.embedding,
-            provider=request.provider,
-            model=request.model,
-            metadata=request.metadata,
-        )
-        return {"status": "stored", "id": result}
+        store = PGVectorStore(db)
+        result = await store.store_vectors([request])
+        return {"status": "stored", "count": result}
     except Exception as exc:
         logger.error("vector_store_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
@@ -142,17 +140,21 @@ async def store_vector(request: StoreRequest = Body(...)):
 
 @app.post(f"{API_PREFIX}/vectors/search", response_model=list[SearchResult],
           tags=["vectors"], summary="Semantic similarity search")
-async def search_vectors(request: SearchRequest = Body(...)):
+async def search_vectors(
+    request: SearchRequest = Body(...),
+    db: AsyncSession = Depends(get_db_session),
+):
     """
     Find the top-k most similar chunks to the query vector.
     Only searches within the same embedding model namespace.
     """
     try:
-        results = await _search.similarity_search(
-            query_vector=request.query_vector,
+        search = VectorSearch(db)
+        results = await search.search(
+            query_embedding=request.query_vector,
             tenant_id=request.tenant_id,
             top_k=request.top_k,
-            threshold=request.similarity_threshold,
+            similarity_threshold=request.similarity_threshold,
             document_id=request.document_id,
         )
         return results
@@ -163,10 +165,15 @@ async def search_vectors(request: SearchRequest = Body(...)):
 
 @app.delete(f"{API_PREFIX}/vectors/document/{{document_id}}", tags=["vectors"],
             summary="Delete all vectors for a document")
-async def delete_document_vectors(document_id: str, tenant_id: str = Query(...)):
+async def delete_document_vectors(
+    document_id: str,
+    tenant_id: str = Query(...),
+    db: AsyncSession = Depends(get_db_session),
+):
     """Delete all stored embeddings for a specific document."""
     try:
-        deleted = await _store.delete_by_document(document_id=document_id, tenant_id=tenant_id)
+        store = PGVectorStore(db)
+        deleted = await store.delete_by_document(document_id=document_id, tenant_id=tenant_id)
         return {"deleted": deleted, "document_id": document_id}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

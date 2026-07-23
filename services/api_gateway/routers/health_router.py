@@ -5,6 +5,8 @@ Phase 3: Central Command monitoring interface.
 """
 
 import asyncio
+import os
+
 import structlog
 import httpx
 from fastapi import APIRouter
@@ -15,18 +17,25 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["Health"])
 settings = get_settings()
 
+
+def _svc_health_url(service_name: str, port: int) -> str:
+    """Build a service health URL, respecting Docker service host overrides."""
+    host = os.environ.get(f"SERVICE_HOST_{service_name.upper()}", "localhost")
+    return f"http://{host}:{port}/health"
+
+
 SERVICE_HEALTH_URLS = {
-    "ingestion_service":   f"http://localhost:{settings.ingestion_service_port}/health",
-    "embedding_service":   f"http://localhost:{settings.embedding_service_port}/health",
-    "vector_vault":        f"http://localhost:{settings.vector_vault_port}/health",
-    "telemetry_service":   f"http://localhost:{settings.telemetry_service_port}/health",
-    "trend_scraper":       f"http://localhost:{settings.trend_scraper_port}/health",
-    "gap_detection":       f"http://localhost:{settings.gap_detection_port}/health",
-    "schema_factory":      f"http://localhost:{settings.schema_factory_port}/health",
-    "dashboard_backend":   f"http://localhost:{settings.dashboard_backend_port}/health",
-    "seo_engine":          f"http://localhost:{settings.seo_engine_port}/health",
-    "geo_engine":          f"http://localhost:{settings.geo_engine_port}/health",
-    "aeo_engine":          f"http://localhost:{settings.aeo_engine_port}/health",
+    "ingestion_service":   _svc_health_url("ingestion_service",  settings.ingestion_service_port),
+    "embedding_service":   _svc_health_url("embedding_service",  settings.embedding_service_port),
+    "vector_vault":        _svc_health_url("vector_vault",        settings.vector_vault_port),
+    "telemetry_service":   _svc_health_url("telemetry_service",  settings.telemetry_service_port),
+    "trend_scraper":       _svc_health_url("trend_scraper",       settings.trend_scraper_port),
+    "gap_detection":       _svc_health_url("gap_detection",       settings.gap_detection_port),
+    "schema_factory":      _svc_health_url("schema_factory",      settings.schema_factory_port),
+    "dashboard_backend":   _svc_health_url("dashboard_backend",   settings.dashboard_backend_port),
+    "seo_engine":          _svc_health_url("seo_engine",          settings.seo_engine_port),
+    "geo_engine":          _svc_health_url("geo_engine",          settings.geo_engine_port),
+    "aeo_engine":          _svc_health_url("aeo_engine",          settings.aeo_engine_port),
 }
 
 

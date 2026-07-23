@@ -19,6 +19,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Body, Query
+from prometheus_client import make_asgi_app
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -314,6 +315,8 @@ Optimises content for direct extraction by answer engines — completing the
         },
     ],
 )
+
+app.mount("/metrics", make_asgi_app())
 
 app.add_middleware(AccessLogMiddleware)
 app.add_middleware(RequestIDMiddleware)

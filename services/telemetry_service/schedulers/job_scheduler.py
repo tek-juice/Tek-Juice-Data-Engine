@@ -7,7 +7,6 @@ Phase 2: Drives trend scraping, gap analysis, and sync jobs.
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from apscheduler.triggers.cron import CronTrigger
 
 from configs.settings import get_settings
 
@@ -24,6 +23,7 @@ class TelemetryScheduler:
     def __init__(self) -> None:
         self._scheduler = AsyncIOScheduler(timezone="UTC")
         self._jobs: dict[str, str] = {}
+        self._db_was_healthy: bool | None = None   # None = unknown (first check)
 
     def start(self) -> None:
         """Register all jobs and start the scheduler."""
@@ -110,12 +110,23 @@ class TelemetryScheduler:
             logger.error("sync_job_failed", error=str(exc))
 
     async def _run_health_check(self) -> None:
-        """Check health of all dependent services."""
+        """Check health of all dependent services.
+
+        Only logs a state *change* — avoids flooding the console with
+        repeated ERROR messages when Docker is intentionally not running.
+        """
         logger.debug("scheduled_job_running", job="health_check")
         from configs.database import check_db_health
         db_healthy = await check_db_health()
-        if not db_healthy:
-            logger.error("health_check_db_failed")
+
+        if db_healthy and self._db_was_healthy is not True:
+            logger.info("health_check_db_recovered")
+        elif not db_healthy and self._db_was_healthy is not False:
+            logger.warning(
+                "health_check_db_unreachable",
+                hint="Start Docker services: docker compose up -d postgres pgbouncer redis",
+            )
+        self._db_was_healthy = db_healthy
 
     def list_jobs(self) -> list[dict]:
         """Return info about all scheduled jobs."""

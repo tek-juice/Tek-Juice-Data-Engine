@@ -22,9 +22,12 @@ class GeminiEmbeddingProvider:
         "text-embedding-004": 768,
     }
 
-    def __init__(self, model: str = "embedding-001") -> None:
-        self.model = model
-        self.dimensions = self.SUPPORTED_MODELS.get(model, 768)
+    def __init__(self, model: str | None = None) -> None:
+        # Strip the "models/" prefix that settings stores for API routing purposes —
+        # SUPPORTED_MODELS keys use bare names ("text-embedding-004").
+        raw = model or settings.default_embedding_model
+        self.model = raw.removeprefix("models/")
+        self.dimensions = self.SUPPORTED_MODELS.get(self.model, 768)
         genai.configure(api_key=settings.gemini_api_key)
 
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=60), reraise=True)

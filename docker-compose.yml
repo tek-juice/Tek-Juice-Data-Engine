@@ -18,6 +18,20 @@ x-docker-env: &docker-env
   REDIS_PORT: 6379
   CELERY_BROKER_URL: redis://redis:6379/0
   CELERY_RESULT_BACKEND: redis://redis:6379/1
+  # Service-to-service routing: api_gateway proxy/health use these to reach
+  # each downstream service by its Docker Compose service name, not localhost.
+  SERVICE_HOST_INGESTION_SERVICE: ingestion_service
+  SERVICE_HOST_EMBEDDING_SERVICE: embedding_service
+  SERVICE_HOST_VECTOR_VAULT: vector_vault
+  SERVICE_HOST_TELEMETRY_SERVICE: telemetry_service
+  SERVICE_HOST_TREND_SCRAPER: trend_scraper
+  SERVICE_HOST_SEMANTIC_ENGINE: semantic_engine
+  SERVICE_HOST_GAP_DETECTION: gap_detection
+  SERVICE_HOST_SCHEMA_FACTORY: schema_factory
+  SERVICE_HOST_DASHBOARD_BACKEND: dashboard_backend
+  SERVICE_HOST_SEO_ENGINE: seo_engine
+  SERVICE_HOST_GEO_ENGINE: geo_engine
+  SERVICE_HOST_AEO_ENGINE: aeo_engine
 
 networks:
   data_engine_net:
@@ -32,6 +46,17 @@ volumes:
   storage_vectors:
 
 services:
+
+  # ── Shared Base Image ─────────────────────
+  # Build this ONCE before any other service image:
+  #   docker compose build base
+  # All service/worker/gateway images inherit from data_engine-base.
+  # Only rebuild when requirements-base.txt changes (rare).
+  base:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.base
+    image: data_engine-base
 
   # ── PostgreSQL + PGVector ──────────────────
   postgres:
@@ -148,6 +173,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8002
     ports:
       - "8002:8002"
     depends_on:
@@ -168,6 +194,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8003
     ports:
       - "8003:8003"
     depends_on:
@@ -188,6 +215,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8004
     ports:
       - "8004:8004"
     volumes:
@@ -210,6 +238,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8005
     ports:
       - "8005:8005"
     depends_on:
@@ -232,6 +261,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8006
     ports:
       - "8006:8006"
     depends_on:
@@ -254,6 +284,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8007
     ports:
       - "8007:8007"
     depends_on:
@@ -274,6 +305,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8008
     ports:
       - "8008:8008"
     depends_on:
@@ -294,6 +326,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8009
     ports:
       - "8009:8009"
     depends_on:
@@ -314,6 +347,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8010
     ports:
       - "8010:8010"
     depends_on:
@@ -336,6 +370,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8011
     ports:
       - "8011:8011"
     depends_on:
@@ -358,6 +393,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8012
     ports:
       - "8012:8012"
     depends_on:
@@ -378,6 +414,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8013
     ports:
       - "8013:8013"
     depends_on:
@@ -398,6 +435,7 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
+      SERVICE_PORT: 8014
     ports:
       - "8014:8014"
     depends_on:
@@ -435,7 +473,8 @@ services:
     env_file: .env
     environment:
       <<: *docker-env
-    command: celery -A workers.celery.app beat --loglevel=info
+    # --schedule points to a tmpfs path the non-root appuser can write to.
+    command: celery -A workers.celery.app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     depends_on:
       redis:
         condition: service_healthy

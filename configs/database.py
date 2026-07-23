@@ -19,6 +19,8 @@ properties via a thin accessor pattern so existing import sites keep working:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -32,8 +34,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
 
+_log = logging.getLogger(__name__)
 
-# ── Lazy engine & session factory ─────────────────────────────────────────────
+
+#  Lazy engine & session factory 
 # Stored as module-level variables but only populated on first use.
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker | None = None
@@ -66,10 +70,14 @@ def _get_engine() -> AsyncEngine:
     """Return the shared engine, building it fresh on every call."""
     global _engine
     from configs.settings import get_settings
-    s = get_settings()
-    url = s.database_url
     from sqlalchemy.pool import NullPool
-    _engine = create_async_engine(url, echo=False, future=True, poolclass=NullPool)
+    s = get_settings()
+    _engine = create_async_engine(
+        s.database_url,
+        echo=False,
+        future=True,
+        poolclass=NullPool,
+    )
     return _engine
 
 
@@ -86,7 +94,7 @@ def _get_session_factory() -> async_sessionmaker:
     return _session_factory
 
 
-# ── Backward-compatible module-level accessors ────────────────────────────────
+#  Backward-compatible module-level accessors
 # Code that does `from configs.database import engine` or
 # `from configs.database import AsyncSessionLocal` still works.
 
@@ -119,7 +127,7 @@ engine: AsyncEngine = _LazyEngine()           # type: ignore[assignment]
 AsyncSessionLocal = _LazySessionFactory()
 
 
-# ── Base Model ────────────────────────────────────────────────────────────────
+#  Base Model 
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
@@ -131,8 +139,7 @@ class Base(DeclarativeBase):
         }
 
 
-# ── PGVector Extension ────────────────────────────────────────────────────────
-
+#  PGVector Extension
 async def enable_pgvector(conn: Any) -> None:
     """Enable vector, pg_trgm, and pgcrypto extensions."""
     await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -140,28 +147,81 @@ async def enable_pgvector(conn: Any) -> None:
     await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
 
 
-# ── Session Dependency ────────────────────────────────────────────────────────
+#  Session Dependency
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency — yields a managed async database session."""
-    async with _get_session_factory()() as session:
+    """FastAPI dependency — yields a managed async database session.
+
+    Converts low-level connection errors (DB unreachable) into
+    ServiceUnavailableError so the exception handlers return a clean
+    503 JSON response rather than propagating a raw OSError through
+    the middleware stack.
+    """
+    from shared.exceptions.base import ServiceUnavailableError
+    try:
+        async with _get_session_factory()() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+    except ServiceUnavailableError:
+        raise
+    except OSError as exc:
+        _log.warning("db_connection_refused: %s", exc)
+        raise ServiceUnavailableError(
+            "Database is unreachable. Start Docker services: "
+            "docker compose up -d postgres pgbouncer"
+        ) from exc
+
+
+#  Database Lifecycle
+
+async def _init_db_core(retries: int, delay: float) -> None:
+    """
+    Internal: attempt DB init with retries, log CRITICAL on final failure.
+    Never raises — callers (init_db background task) log and continue.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
         try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+            async with _get_engine().begin() as conn:
+                await enable_pgvector(conn)
+                await conn.run_sync(Base.metadata.create_all)
+            _log.info("Database initialised successfully.")
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries:
+                _log.warning(
+                    "Database not ready (attempt %d/%d): %s — retrying in %.0fs…",
+                    attempt, retries, exc, delay,
+                )
+                await asyncio.sleep(delay)
+
+    _log.critical(
+        "Database unreachable after %d attempts. Last error: %s\n"
+        "  → Make sure PostgreSQL (or PgBouncer) is running and "
+        "PGBOUNCER_HOST / POSTGRES_HOST point to the correct host.\n"
+        "  → Local dev:  docker compose up -d postgres pgbouncer redis",
+        retries, last_exc,
+    )
 
 
-# ── Database Lifecycle ────────────────────────────────────────────────────────
+async def init_db(retries: int = 5, delay: float = 2.0) -> None:
+    """
+    Schedule DB initialisation as a background task and return immediately.
 
-async def init_db() -> None:
-    """Enable extensions and create all tables. Called at app startup."""
-    async with _get_engine().begin() as conn:
-        await enable_pgvector(conn)
-        await conn.run_sync(Base.metadata.create_all)
+    Every service calls ``await init_db()`` in its lifespan.  By scheduling
+    the work as a background asyncio task the service process binds its port
+    and starts accepting connections right away — even when the database
+    container is still coming up.  DB-dependent endpoints return 503 via
+    ``get_db_session`` until the connection succeeds.
+    """
+    asyncio.create_task(_init_db_core(retries, delay))
 
 
 async def dispose_db() -> None:
@@ -170,7 +230,7 @@ async def dispose_db() -> None:
         await _engine.dispose()
 
 
-# ── Health Check ──────────────────────────────────────────────────────────────
+#  Health Check 
 
 async def check_db_health() -> bool:
     """Return True if the database is reachable."""

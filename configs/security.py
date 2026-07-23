@@ -1,5 +1,5 @@
 """
-DATA ENGINE — Security Configuration
+DATA ENGINE  Security Configuration
 JWT token management, password hashing, API key generation,
 and row-level security helpers.
 """
@@ -11,33 +11,36 @@ from typing import Any
 
 import hashlib
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from configs.settings import get_settings
 
 settings = get_settings()
 
-# ── Password Hashing 
-
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=settings.bcrypt_rounds,
-)
-
+#  Password Hashing
+# Uses bcrypt directly (bypasses passlib 1.7.4 / bcrypt 4.x incompatibility).
 
 def hash_password(plain_password: str) -> str:
     """Hash a plain-text password using bcrypt."""
-    return pwd_context.hash(plain_password)
+    return bcrypt.hashpw(
+        plain_password.encode("utf-8"),
+        bcrypt.gensalt(rounds=settings.bcrypt_rounds),
+    ).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain-text password against its bcrypt hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except Exception:
+        return False
 
 
-# ── JWT Tokens 
+#  JWT Tokens 
 
 def create_access_token(
     subject: str,
@@ -107,7 +110,7 @@ def is_token_valid(token: str) -> bool:
         return False
 
 
-# ── API Key Generation 
+#  API Key Generation 
 
 _API_KEY_ALPHABET = string.ascii_letters + string.digits
 _API_KEY_PREFIX = "de_"  # DATA ENGINE prefix
@@ -163,9 +166,9 @@ def set_tenant_context_sql(tenant_id: str) -> str:
     return f"SET LOCAL app.current_tenant_id = '{tenant_id}';"
 
 
-# ── CORS Helpers 
+#  CORS Helpers 
 
-# ── API Key Hashing
+#  API Key Hashing
 
 def hash_api_key(api_key: str) -> str:
     """
@@ -176,14 +179,14 @@ def hash_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
-# ── CORS Helpers
+#  CORS Helpers
 
 def get_cors_origins() -> list[str]:
     """Return allowed CORS origins from settings."""
     return settings.gateway_allowed_origins
 
 
-# ── Security Headers 
+#  Security Headers 
 
 SECURITY_HEADERS: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",

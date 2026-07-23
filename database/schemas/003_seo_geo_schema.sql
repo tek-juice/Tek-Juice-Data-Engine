@@ -1,7 +1,7 @@
 -- DATA ENGINE — SEO & GEO Schema
 -- Phase 4: Tables for SEO analysis, GEO entity mapping, knowledge graph
 
- SEO Analysis 
+-- SEO Analysis
 CREATE TABLE IF NOT EXISTS seo_analysis (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id         UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
