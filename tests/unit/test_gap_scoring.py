@@ -16,7 +16,7 @@ from services.gap_detection.recommendation import (
     RecommendationEngine,
     Recommendation,
 )
-from configs.constants import GapSeverity
+from configs.constants import GapSeverity, GAP_SCORE_THRESHOLDS
 
 
 class TestGapScoreComputation:
@@ -64,7 +64,7 @@ class TestGapSeverityClassification:
 
     def test_boundary_medium(self):
         # Exactly at the MEDIUM threshold
-        assert classify_severity(GapSeverity.MEDIUM.value if hasattr(GapSeverity.MEDIUM, "value") else 0.50) in (
+        assert classify_severity(GAP_SCORE_THRESHOLDS[GapSeverity.MEDIUM]) in (
             GapSeverity.MEDIUM, GapSeverity.HIGH
         )
 

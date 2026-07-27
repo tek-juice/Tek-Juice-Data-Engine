@@ -1,7 +1,12 @@
 """
 DATA ENGINE — Trend Scraper Scheduler
 Orchestrates scraping runs across all configured sources.
-Phase 2: Automated retrieval loops for external trend monitoring.
+Phase 2: Global trend monitoring with API + indirect signal fallback.
+
+Source priority:
+  1. Official APIs  (require credentials — highest fidelity)
+  2. Indirect/public channels (no credentials — bypass API blocks)
+  Both pipelines run concurrently; results are merged and deduped.
 """
 
 import asyncio
@@ -14,6 +19,7 @@ from services.trend_scraper.google.google_scraper import GoogleScraper
 from services.trend_scraper.bing.bing_scraper import BingScraper
 from services.trend_scraper.news.news_scraper import NewsScraper
 from services.trend_scraper.social_media.social_scraper import SocialScraper
+from services.trend_scraper.social_media.indirect_signals import IndirectSignalCollector
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -39,6 +45,10 @@ class TrendScraperScheduler:
             "bing":         BingScraper(),
             "news":         NewsScraper(),
             "social_media": SocialScraper(),
+            # Indirect/public signal channels — no API keys required.
+            # These run alongside official APIs and kick in even when
+            # official APIs are rate-limited or blocked entirely.
+            "indirect":     IndirectSignalCollector(),
         }
 
     async def run(
@@ -168,5 +178,18 @@ class TrendScraperScheduler:
                 "snapchat",
                 "youtube",
                 "linkedin",
+            ],
+            # Indirect channels — no API keys required
+            "indirect": [
+                "google_trends_autocomplete",
+                "google_daily_trends",
+                "nitter_rss",           # Twitter/X via public mirror
+                "reddit_public_json",   # Reddit without OAuth
+                "tiktok_web_api",       # TikTok web session (no app auth)
+                "youtube_trending_rss", # YouTube trending without API key
+                "github_trending",      # Developer/tech signals
+                "wikipedia_pageviews",  # Cultural trending topics
+                "medium_rss",           # Long-form trend articles
+                "instagram_public_gql", # Instagram hashtag (rate-limited)
             ],
         }

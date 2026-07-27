@@ -122,9 +122,9 @@ class GapSeverity(str, Enum):
 
 
 GAP_SCORE_THRESHOLDS: dict[GapSeverity, float] = {
-    GapSeverity.LOW: 0.25,
-    GapSeverity.MEDIUM: 0.50,
-    GapSeverity.HIGH: 0.75,
+    GapSeverity.LOW: 0.10,
+    GapSeverity.MEDIUM: 0.30,
+    GapSeverity.HIGH: 0.60,
     GapSeverity.CRITICAL: 0.90,
 }
 
@@ -258,17 +258,37 @@ API_VERSION_HEADER = "X-API-Version"
 
 #  Celery Task Names 
 
-TASK_INGEST_DOCUMENT     = "tasks.ingest_document"
-TASK_CHUNK_TEXT          = "tasks.chunk_text"
-TASK_GENERATE_EMBEDDINGS = "tasks.generate_embeddings"
-TASK_STORE_VECTORS       = "tasks.store_vectors"
-TASK_RUN_GAP_ANALYSIS    = "tasks.run_gap_analysis"
-TASK_GENERATE_SCHEMA     = "tasks.generate_schema"
-TASK_SCRAPE_TRENDS       = "tasks.scrape_trends"
-TASK_SYNC_DATA_POOL      = "tasks.sync_data_pool"
-TASK_RUN_SEO_ANALYSIS    = "tasks.run_seo_analysis"
-TASK_RUN_GEO_ANALYSIS    = "tasks.run_geo_analysis"
-TASK_RUN_AEO_ANALYSIS    = "tasks.run_aeo_analysis"
+TASK_INGEST_DOCUMENT       = "tasks.ingest_document"
+TASK_CHUNK_TEXT            = "tasks.chunk_text"
+TASK_GENERATE_EMBEDDINGS   = "tasks.generate_embeddings"
+TASK_STORE_VECTORS         = "tasks.store_vectors"
+TASK_RUN_GAP_ANALYSIS      = "tasks.run_gap_analysis"
+TASK_GENERATE_SCHEMA       = "tasks.generate_schema"
+TASK_SCRAPE_TRENDS         = "tasks.scrape_trends"
+TASK_SYNC_DATA_POOL        = "tasks.sync_data_pool"
+TASK_RUN_SEO_ANALYSIS      = "tasks.run_seo_analysis"
+TASK_RUN_GEO_ANALYSIS      = "tasks.run_geo_analysis"
+TASK_RUN_AEO_ANALYSIS      = "tasks.run_aeo_analysis"
+TASK_AUTO_CLOSE_GAPS         = "tasks.auto_close_gaps"
+TASK_AUTO_CLOSE_GAPS_BATCH   = "tasks.auto_close_gaps_batch"
+TASK_WRITE_GAP_CONTENT       = "tasks.write_gap_content"
+TASK_WRITE_GAP_CONTENT_BATCH = "tasks.write_gap_content_batch"
+TASK_EMBED_GAP_DRAFTS        = "tasks.embed_gap_drafts"
+TASK_DELIVER_WEBHOOK         = "tasks.deliver_webhook"
+TASK_NOTIFY_DOC_COMPLETED    = "tasks.notify_document_completed"
+
+
+#  Webhook Event Types
+
+class WebhookEvent(str, Enum):
+    DOCUMENT_COMPLETED = "document.completed"
+    DOCUMENT_FAILED    = "document.failed"
+    GAP_DETECTED       = "gap.detected"
+    GAP_RESOLVED       = "gap.resolved"
+    DRAFTS_READY       = "drafts.ready"
+    SCHEMA_GENERATED   = "schema.generated"
+    RANKING_UPDATED    = "ranking.updated"
+    WILDCARD           = "*"
 
 
 #  Cache TTLs (seconds) 

@@ -18,6 +18,9 @@ celery_app = Celery(
         "workers.celery.tasks.embedding_tasks",
         "workers.celery.tasks.telemetry_tasks",
         "workers.celery.tasks.gap_tasks",
+        "workers.celery.tasks.auto_close_tasks",
+        "workers.celery.tasks.writing_tasks",
+        "workers.celery.tasks.webhook_tasks",
         "workers.celery.tasks.scraper_tasks",
         "workers.celery.tasks.sync_tasks",
         "workers.celery.tasks.aeo_tasks",
@@ -61,6 +64,14 @@ celery_app.conf.update(
         "run-gap-analysis-6h": {
             "task": "tasks.run_gap_analysis_batch",
             "schedule": 21600,  # 6 hours
+        },
+        "auto-close-gaps-batch": {
+            "task": "tasks.auto_close_gaps_batch",
+            "schedule": settings.gap_auto_close_interval_seconds,
+        },
+        "write-gap-content-batch": {
+            "task": "tasks.write_gap_content_batch",
+            "schedule": settings.gap_auto_close_interval_seconds,
         },
         "run-aeo-batch-6h": {
             "task": "tasks.run_aeo_analysis_batch",

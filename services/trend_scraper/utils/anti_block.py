@@ -1,7 +1,16 @@
 """
 DATA ENGINE — Anti-Blocking Utilities
 Provides proxy rotation, rate limiting, user-agent rotation,
-and request delay jitter to avoid scraper detection and geo-blocks.
+fingerprint-consistent headers, and request delay jitter to avoid
+scraper detection, TLS fingerprinting, and geo-blocks.
+
+Upgrade summary (super-engine):
+  - get_random_headers() now delegates to BrowserProfile for fully
+    consistent UA + Accept + Sec-CH-UA header sets.
+  - build_scraperapi_url() unchanged (ScraperAPI handles its own proxies).
+  - ProxyRotator / RateLimiter unchanged.
+  - New: get_stealth_headers() returns headers optimised for a specific
+    target domain (adds Origin, Referer, and platform-specific fields).
 """
 
 import asyncio
@@ -214,21 +223,74 @@ _proxy_rotator = ProxyRotator()
 _rate_limiter = RateLimiter()
 
 
-def get_random_headers() -> dict[str, str]:
-    """Return randomised headers to avoid fingerprinting."""
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": random.choice(ACCEPT_LANGUAGES),
-        "Accept-Encoding": "gzip, deflate, br",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Cache-Control": "max-age=0",
-    }
+def get_random_headers(domain: str = "") -> dict[str, str]:
+    """
+    Return a fully consistent set of HTTP headers for a given domain.
+    Uses BrowserProfile to ensure UA, Accept, Sec-CH-UA, and language
+    headers are all internally consistent — defeating header-fingerprint
+    detectors that flag mismatched Accept/UA combinations.
+    """
+    try:
+        from services.trend_scraper.utils.fingerprint_spoofer import (
+            get_random_profile,
+            get_profile_http_headers,
+        )
+        profile  = get_random_profile()
+        headers  = get_profile_http_headers(profile)
+        # Add domain-specific stealth headers
+        if domain:
+            origin_domain = domain if domain.startswith("http") else f"https://{domain}"
+            headers["Origin"]  = origin_domain
+            headers["Referer"] = origin_domain + "/"
+        return headers
+    except ImportError:
+        # Fallback if fingerprint_spoofer is unavailable
+        return {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": random.choice(ACCEPT_LANGUAGES),
+            "Accept-Encoding": "gzip, deflate, br",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Cache-Control": "max-age=0",
+        }
+
+
+def get_stealth_headers(target_url: str, referer: str = "") -> dict[str, str]:
+    """
+    Build maximally stealthy headers for a specific target URL.
+    Adds Origin, Referer, and any platform-specific headers the target
+    server expects from a real browser.
+
+    Args:
+        target_url: The URL being requested.
+        referer:    Optional preceding page (builds realistic nav chain).
+    """
+    try:
+        from services.trend_scraper.utils.fingerprint_spoofer import (
+            get_random_profile,
+            get_profile_http_headers,
+        )
+        profile = get_random_profile()
+        headers = get_profile_http_headers(profile, referer=referer)
+    except ImportError:
+        headers = get_random_headers()
+
+    parsed = urllib.parse.urlparse(target_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    headers["Origin"]  = origin
+    if not referer:
+        # Simulate a realistic referral chain (most traffic comes from Google)
+        headers["Referer"] = random.choice([
+            "https://www.google.com/",
+            "https://www.google.co.uk/",
+            origin + "/",
+        ])
+    return headers
 
 
 # ── Request counter for periodic think-time pauses ───────────────────────────

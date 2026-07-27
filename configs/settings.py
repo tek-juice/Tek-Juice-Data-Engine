@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     )
 
     # ── Application
-    app_env: Literal["development", "staging", "production"] = "development"
+    app_env: Literal["development", "staging", "production", "testing"] = "development"
     app_debug: bool = False
     app_secret_key: str = Field(..., min_length=32)
     app_log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -159,6 +159,29 @@ class Settings(BaseSettings):
     bing_search_api_key: str = ""
     scraper_interval_seconds: int = 3600
 
+    # ── Gap Auto-Closure
+    # How often (seconds) the auto-close batch sweep runs across all documents.
+    # Defaults to 6 hours. Documents with open gap_close_actions are prioritised.
+    gap_auto_close_interval_seconds: int = 21600   # 6 hours
+
+    # ── Webhooks
+    # Timeout for outbound webhook POST requests (seconds).
+    webhook_timeout_seconds: float = 15.0
+    # Maximum automatic retry attempts per endpoint before giving up.
+    webhook_max_retries: int = 3
+
+    # ── LLM Writing Agent
+    # Provider used to generate gap-filling content drafts.
+    # Options: "gemini" | "openai"
+    # Falls back to openai automatically if the gemini key is absent.
+    llm_writing_provider: str = "gemini"
+    # Model name for the writing provider.
+    # Gemini:  gemini-1.5-pro | gemini-1.5-flash | gemini-2.0-flash
+    # OpenAI:  gpt-4o | gpt-4o-mini | gpt-4-turbo
+    llm_writing_model: str = "gemini-1.5-pro"
+    # Maximum tokens the writing agent may generate per content section.
+    llm_writing_max_tokens: int = 1200
+
     # ── DataForSEO — SERP Rank Tracking & Backlink Authority
     # Credentials: https://app.dataforseo.com/api-dashboard
     dataforseo_login: str = ""
@@ -180,6 +203,29 @@ class Settings(BaseSettings):
     scraper_api_key: str = ""
     scraper_rate_limit_rpm: int = 30
     scraper_request_delay: float = 2.0
+
+    # ── Indirect / Public Signal Channels (no API keys required)
+    # Enable/disable individual public fallback channels independently.
+    # All default to True — set False to disable a specific channel.
+    indirect_signals_enabled: bool = True
+    indirect_nitter_enabled: bool = True        # Twitter via nitter.net RSS
+    indirect_reddit_enabled: bool = True        # Reddit public JSON (no OAuth)
+    indirect_tiktok_web_enabled: bool = True    # TikTok web session scraping
+    indirect_youtube_rss_enabled: bool = True   # YouTube trending RSS (no API key)
+    indirect_github_enabled: bool = True        # GitHub trending repos
+    indirect_wikipedia_enabled: bool = True     # Wikipedia pageviews API
+    indirect_medium_enabled: bool = True        # Medium tag RSS
+    indirect_google_trends_enabled: bool = True # Google autocomplete + daily trends
+    indirect_instagram_public_enabled: bool = False  # Instagram public GQL (aggressive rate-limit, off by default)
+
+    # Nitter instance pool override (comma-separated; leave blank to use built-in list)
+    nitter_instances: str = ""
+
+    # ── Warm Session Config
+    # How many warm browser sessions to maintain per platform domain
+    session_pool_size: int = 3
+    # How long a warm session stays valid before being recycled (seconds)
+    session_ttl_seconds: int = 1800
 
     @property
     def proxy_list(self) -> list[str]:

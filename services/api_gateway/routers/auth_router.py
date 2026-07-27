@@ -7,7 +7,7 @@ Phase 3: Central Command — API Manager.
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -169,3 +169,158 @@ async def revoke_api_key(
         {"key_id": key_id, "tenant_id": current_user.tenant_id},
     )
     logger.info("api_key_revoked", key_id=key_id)
+
+
+# ── Webhook Endpoint Management ───────────────────────────────────────────────
+
+class WebhookCreateRequest(BaseModel):
+    url: str = Field(..., description="HTTPS URL the Engine will POST events to")
+    event_types: list[str] = Field(
+        default=["*"],
+        description='Events to subscribe to. Use ["*"] for all. '
+                    'Options: document.completed, document.failed, gap.detected, '
+                    'gap.resolved, drafts.ready, schema.generated, ranking.updated',
+    )
+    description: str = Field(default="", max_length=200)
+
+
+class WebhookResponse(BaseModel):
+    id: str
+    url: str
+    event_types: list[str]
+    description: str
+    is_active: bool
+    created_at: str
+
+
+@router.post("/webhooks", response_model=WebhookResponse, status_code=201,
+             tags=["Authentication"])
+async def register_webhook(
+    body: WebhookCreateRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Register a webhook endpoint for your product.
+
+    The Engine will POST a signed JSON payload to your URL whenever a
+    subscribed event occurs.  Verify the signature using:
+
+        import hmac, hashlib
+        expected = hmac.new(YOUR_SECRET.encode(), request.body, hashlib.sha256).hexdigest()
+        assert request.headers["X-DataEngine-Signature"] == f"sha256={expected}"
+
+    The signing secret is returned **once** at registration — store it securely.
+    """
+    import uuid
+    from configs.security import generate_api_key
+
+    endpoint_id = str(uuid.uuid4())
+    secret      = generate_api_key()   # 32-byte random secret for HMAC signing
+
+    await db.execute(
+        text("""
+            INSERT INTO webhook_endpoints
+                (id, tenant_id, url, secret, event_types, description, is_active)
+            VALUES
+                (:id, :tenant_id, :url, :secret, :event_types, :description, TRUE)
+        """),
+        {
+            "id":          endpoint_id,
+            "tenant_id":   current_user.tenant_id,
+            "url":         body.url,
+            "secret":      secret,
+            "event_types": body.event_types,
+            "description": body.description,
+        },
+    )
+    logger.info(
+        "webhook_registered",
+        tenant_id=current_user.tenant_id,
+        url=body.url,
+        events=body.event_types,
+    )
+    return {
+        "id":          endpoint_id,
+        "url":         body.url,
+        "event_types": body.event_types,
+        "description": body.description,
+        "is_active":   True,
+        "secret":      secret,   # returned ONCE — store securely
+        "created_at":  __import__("datetime").datetime.utcnow().isoformat(),
+        "message":     "Store your secret securely — it will not be shown again.",
+    }
+
+
+@router.get("/webhooks", tags=["Authentication"])
+async def list_webhooks(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List all registered webhook endpoints for the current tenant."""
+    result = await db.execute(
+        text("""
+            SELECT id, url, event_types, description, is_active,
+                   created_at::text
+            FROM webhook_endpoints
+            WHERE tenant_id = :tenant_id
+            ORDER BY created_at DESC
+        """),
+        {"tenant_id": current_user.tenant_id},
+    )
+    rows = [dict(r._mapping) for r in result.fetchall()]
+    # Never return the secret in list responses
+    return {"webhooks": rows, "count": len(rows)}
+
+
+@router.delete("/webhooks/{endpoint_id}", status_code=204, tags=["Authentication"])
+async def delete_webhook(
+    endpoint_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Deactivate (soft-delete) a webhook endpoint."""
+    await db.execute(
+        text("""
+            UPDATE webhook_endpoints
+            SET is_active = FALSE, updated_at = NOW()
+            WHERE id = :endpoint_id AND tenant_id = :tenant_id
+        """),
+        {"endpoint_id": endpoint_id, "tenant_id": current_user.tenant_id},
+    )
+    logger.info("webhook_deleted", endpoint_id=endpoint_id)
+
+
+@router.get("/webhooks/{endpoint_id}/logs", tags=["Authentication"])
+async def webhook_delivery_logs(
+    endpoint_id: str,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db_session),
+    limit: int = 50,
+):
+    """
+    Return the last N delivery attempts for a webhook endpoint.
+    Useful for debugging missed or failed events.
+    """
+    result = await db.execute(
+        text("""
+            SELECT event_type, url, status_code, success,
+                   error, duration_ms, attempted_at::text
+            FROM webhook_delivery_log
+            WHERE endpoint_id = :endpoint_id
+              AND tenant_id   = :tenant_id
+            ORDER BY attempted_at DESC
+            LIMIT :limit
+        """),
+        {
+            "endpoint_id": endpoint_id,
+            "tenant_id":   current_user.tenant_id,
+            "limit":       limit,
+        },
+    )
+    rows = [dict(r._mapping) for r in result.fetchall()]
+    return {
+        "endpoint_id": endpoint_id,
+        "logs":        rows,
+        "count":       len(rows),
+    }

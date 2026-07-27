@@ -35,9 +35,15 @@ from playwright.async_api import (
 
 from configs.settings import get_settings
 from services.trend_scraper.utils.anti_block import (
+    USER_AGENTS,
     get_random_headers,
     get_random_ua_and_viewport,
     _proxy_rotator,
+)
+from services.trend_scraper.utils.fingerprint_spoofer import (
+    get_random_profile,
+    get_profile_http_headers,
+    BrowserProfile,
 )
 
 logger = structlog.get_logger(__name__)
@@ -165,32 +171,32 @@ class HeadlessBrowser:
         if not self._browser:
             raise RuntimeError("HeadlessBrowser must be used as async context manager")
 
-        user_agent, (vp_width, vp_height) = get_random_ua_and_viewport()
+        # Use a fully consistent browser profile (UA + viewport + fingerprint)
+        profile: BrowserProfile = getattr(self, "_profile", None) or get_random_profile()
+        self._profile = profile
 
         context: BrowserContext = await self._browser.new_context(
-            user_agent=user_agent,
-            viewport={"width": vp_width, "height": vp_height},
-            locale="en-US",
-            timezone_id="America/New_York",
-            # Stealth: hide webdriver flag
+            user_agent=profile.user_agent,
+            viewport={"width": profile.viewport_w, "height": profile.viewport_h},
+            locale=profile.language,
+            timezone_id=profile.timezone,
+            color_scheme="light",
+            device_scale_factor=profile.pixel_ratio,
+            # Profile-consistent headers
             extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Language": profile.accept_language,
                 "Accept-Encoding": "gzip, deflate, br",
                 "DNT": "1",
+                **({"Sec-CH-UA": profile.sec_ch_ua,
+                    "Sec-CH-UA-Mobile": "?1" if "Mobile" in profile.user_agent else "?0",
+                    "Sec-CH-UA-Platform": profile.sec_ch_ua_platform,
+                    } if profile.sec_ch_ua else {}),
             },
         )
 
         if self._stealth:
-            await context.add_init_script("""
-                // Hide automation indicators from Cloudflare and bot detectors
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                window.chrome = { runtime: {} };
-                Object.defineProperty(navigator, 'permissions', {
-                    get: () => ({ query: () => Promise.resolve({ state: 'granted' }) })
-                });
-            """)
+            # Inject full fingerprint spoofer (canvas, WebGL, audio, plugins, etc.)
+            await context.add_init_script(profile.to_js_init_script())
 
         page: Page = await context.new_page()
         was_js_rendered    = False
@@ -259,9 +265,10 @@ class HeadlessBrowser:
                 title=title,
                 links=links,
                 metadata={
-                    "user_agent":  user_agent,
-                    "viewport":    f"{vp_width}x{vp_height}",
+                    "user_agent":  profile.user_agent,
+                    "viewport":    f"{profile.viewport_w}x{profile.viewport_h}",
                     "proxy_used":  bool(self._proxy_url),
+                    "profile":     profile.name,
                 },
                 was_js_rendered=was_js_rendered,
                 cloudflare_bypassed=cloudflare_bypassed,
@@ -371,7 +378,7 @@ class SmartScraper:
                 resp = await client.get(
                     url,
                     headers={
-                        "User-Agent": USER_AGENTS[0],
+                        "User-Agent": get_random_profile().user_agent,
                         "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
                     },
                     follow_redirects=True,

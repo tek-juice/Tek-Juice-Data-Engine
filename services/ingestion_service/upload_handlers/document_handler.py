@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.constants import DocumentStatus
 from configs.settings import get_settings
-from shared.utils.hashing import content_fingerprint, document_fingerprint
+from shared.utils.hashing import document_fingerprint
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
@@ -28,7 +28,6 @@ async def create_document_record(
     Persist a new document record and store raw content to disk.
     Returns the created document row.
     """
-    import os
     document_id = str(uuid.uuid4())
     storage_path = _save_to_storage(document_id, filename, content)
 
@@ -75,7 +74,7 @@ def _save_to_storage(document_id: str, filename: str, content: bytes) -> str:
 async def dispatch_processing_pipeline(document_id: str, tenant_id: str) -> None:
     """
     Dispatch the full processing pipeline as a Celery chain:
-    preprocess → chunk → embed → store
+    preprocess → chunk → embed → store → webhook(document.completed)
     """
     try:
         from celery import chain
@@ -86,6 +85,10 @@ async def dispatch_processing_pipeline(document_id: str, tenant_id: str) -> None
             celery_app.signature("tasks.chunk_document", args=[document_id, tenant_id]),
             celery_app.signature("tasks.generate_embeddings", args=[document_id, tenant_id]),
             celery_app.signature("tasks.store_vectors", args=[document_id, tenant_id]),
+            celery_app.signature(
+                "tasks.notify_document_completed",
+                kwargs={"document_id": document_id, "tenant_id": tenant_id},
+            ),
         )
         pipeline.delay()
         logger.info("pipeline_dispatched", document_id=document_id)

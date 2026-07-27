@@ -22,6 +22,7 @@ from shared.exceptions.handlers import register_exception_handlers
 from shared.middleware.request_id import RequestIDMiddleware
 from shared.middleware.logging import AccessLogMiddleware
 from services.gap_detection.analyzer import GapAnalyzer, GapAnalysisResult
+from services.gap_detection.optimizer import GapOptimiser
 from services.gap_detection.recommendation import RecommendationEngine
 from services.gap_detection.content_clusters import ContentClusterBuilder
 
@@ -208,6 +209,157 @@ async def build_content_clusters(request: ContentClustersRequest = Body(...)):
         return _cluster_builder.to_dict(report)
     except Exception as exc:
         logger.error("content_clusters_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post(f"{API_PREFIX}/gaps/write/{{document_id}}", tags=["gaps"],
+          summary="Trigger the LLM Writing Agent for a document immediately")
+async def trigger_writing_agent(
+    document_id: str,
+    tenant_id: str,
+):
+    """
+    Dispatch `tasks.write_gap_content` for a document right now.
+
+    Use this after updating content to regenerate drafts on-demand, or to
+    force the writing cycle outside the scheduled batch window.
+
+    The task runs asynchronously — poll `GET /gaps/drafts/{document_id}` to
+    see the results once the Celery worker completes.
+    """
+    try:
+        from workers.celery.app import celery_app
+        celery_app.send_task(
+            "tasks.write_gap_content",
+            kwargs={"document_id": document_id, "tenant_id": tenant_id},
+        )
+        return {
+            "status":      "queued",
+            "document_id": document_id,
+            "message":     "Writing agent dispatched. Poll /gaps/drafts/{document_id} for results.",
+        }
+    except Exception as exc:
+        logger.error("trigger_writing_agent_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get(f"{API_PREFIX}/gaps/drafts/{{document_id}}", tags=["gaps"],
+         summary="Get all LLM-generated content drafts for a document")
+async def get_content_drafts(
+    document_id: str,
+    tenant_id: str,
+    status: str | None = None,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Return all content drafts the LLM Writing Agent has generated for this
+    document, optionally filtered by status (draft | embedded | approved | rejected).
+
+    Each row contains the full draft_text, the target query_variants, the
+    recommended schema_types, and authority_signals — everything needed to
+    publish the content and update the source document.
+    """
+    try:
+        from sqlalchemy import text
+        query = """
+            SELECT id::text, topic, intent, priority, draft_text, word_count,
+                   query_variants, schema_types, authority_signals,
+                   content_brief, model_used, provider_used,
+                   status, generated_at::text
+            FROM gap_content_drafts
+            WHERE document_id = :doc_id AND tenant_id = :tenant_id
+        """
+        params: dict = {"doc_id": document_id, "tenant_id": tenant_id}
+        if status:
+            query  += " AND status = :status"
+            params["status"] = status
+        query += " ORDER BY priority ASC"
+
+        result = await session.execute(text(query), params)
+        rows   = [dict(r._mapping) for r in result.fetchall()]
+        total_words = sum(r.get("word_count", 0) for r in rows)
+        return {
+            "document_id":   document_id,
+            "drafts":        rows,
+            "count":         len(rows),
+            "total_words":   total_words,
+        }
+    except Exception as exc:
+        logger.error("get_content_drafts_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post(f"{API_PREFIX}/gaps/close/{{document_id}}", tags=["gaps"],
+          summary="Immediately trigger auto gap-closure for a document")
+async def trigger_auto_close(
+    document_id: str,
+    tenant_id: str,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Run the full gap-detection → closure-plan pipeline right now for a single
+    document.  Useful to force immediate closure after content has been updated.
+
+    Equivalent to dispatching the `tasks.auto_close_gaps` Celery task but
+    executes synchronously so the caller sees the result immediately.
+    """
+    try:
+        analyser  = GapAnalyzer(session)
+        result: GapAnalysisResult = await analyser.analyse(
+            document_id=document_id,
+            tenant_id=tenant_id,
+        )
+        optimiser = GapOptimiser(session)
+        actions   = await optimiser.optimise(result)
+        await session.commit()
+        return {
+            "document_id":      document_id,
+            "gap_score":        result.gap_score,
+            "severity":         result.severity,
+            "actions":          actions.get("actions", []),
+            "clusters_created": actions.get("close_plan_clusters", 0),
+            "estimated_words":  actions.get("close_plan_words", 0),
+        }
+    except Exception as exc:
+        logger.error("trigger_auto_close_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get(f"{API_PREFIX}/gaps/close-actions/{{document_id}}", tags=["gaps"],
+         summary="Get the current auto-closure plan for a document")
+async def get_close_action(
+    document_id: str,
+    tenant_id: str,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Return the live gap_close_actions record for a document — the full
+    Intent-Based Content Cluster plan specifying exactly what to write to
+    close every gap and rank first.
+    """
+    try:
+        from sqlalchemy import text
+        result = await session.execute(
+            text("""
+                SELECT gap_score, severity, missing_topics, close_plan,
+                       status, created_at, updated_at, resolved_at
+                FROM gap_close_actions
+                WHERE document_id = :doc_id AND tenant_id = :tenant_id
+                LIMIT 1
+            """),
+            {"doc_id": document_id, "tenant_id": tenant_id},
+        )
+        row = result.fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="No gap close action found for this document.",
+            )
+        return dict(row._mapping)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_close_action_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
 
 
