@@ -57,9 +57,9 @@ celery_app.conf.update(
             "schedule": settings.scraper_interval_seconds,
             "kwargs": {"sources": ["google", "bing", "news", "social_media"]},
         },
-        "embed-scraped-trends-hourly": {
+        "embed-scraped-trends-2h": {
             "task": "tasks.embed_scraped_trends",
-            "schedule": settings.scraper_interval_seconds,
+            "schedule": 7200,  # 2 hours — runs after scrape_trends has populated data
         },
         "run-gap-analysis-6h": {
             "task": "tasks.run_gap_analysis_batch",

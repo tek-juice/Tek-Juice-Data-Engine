@@ -350,6 +350,26 @@ async def refresh_token(body: RefreshRequest):
     )
 
 
+@router.get("/api-keys")
+async def list_api_keys(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """List all active API keys for the current tenant (prefix + metadata, never raw key)."""
+    result = await db.execute(
+        text("""
+            SELECT id AS key_id, key_prefix AS prefix, name,
+                   created_at::text, last_used_at::text AS last_used
+            FROM api_keys
+            WHERE tenant_id = :tenant_id AND is_active = TRUE
+            ORDER BY created_at DESC
+        """),
+        {"tenant_id": current_user.tenant_id},
+    )
+    rows = [dict(r._mapping) for r in result.fetchall()]
+    return rows
+
+
 @router.post("/api-keys", response_model=APIKeyResponse, status_code=201)
 async def create_api_key(
     body: APIKeyCreateRequest,
@@ -467,7 +487,7 @@ async def register_webhook(
         events=body.event_types,
     )
     return {
-        "id":          endpoint_id,
+        "endpoint_id": endpoint_id,
         "url":         body.url,
         "event_types": body.event_types,
         "description": body.description,
