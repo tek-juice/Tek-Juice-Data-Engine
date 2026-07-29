@@ -1,13 +1,13 @@
 """
 DATA ENGINE — Ingestion Router
-Handles document upload, status queries, and deletion.
+Handles document upload, status queries, deletion, and automated website crawl.
 """
 
 import uuid
-from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, File, Form, UploadFile, Query
+from pydantic import BaseModel, HttpUrl
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -147,3 +147,102 @@ async def delete_document(
         },
     )
     logger.info("document_deleted", document_id=str(document_id))
+
+
+# ── Automated Website Crawl ───────────────────────────────────────────────────
+
+class CrawlRegisterRequest(BaseModel):
+    website_url: HttpUrl
+    max_pages: int = 50
+    max_depth: int = 3
+    recrawl_interval_hours: int = 24
+
+
+@router.post("/crawl", status_code=202)
+async def register_and_crawl(
+    body: CrawlRegisterRequest,
+    current_user: CurrentUser = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Register a website URL for this tenant and immediately trigger the first crawl.
+
+    The Engine will:
+      1. Persist the URL on the tenant record.
+      2. Dispatch crawl_and_ingest_website — which crawls every page and feeds
+         each one through the full pipeline (chunk → embed → gap → write drafts).
+      3. From this point, the daily Celery beat task re-crawls the site automatically
+         every recrawl_interval_hours (default 24h) with zero human effort.
+
+    This is the single registration step that makes everything autonomous.
+    """
+    url_str = str(body.website_url).rstrip("/")
+
+    # Persist URL + crawl config on the tenant
+    await db.execute(
+        text("""
+            UPDATE tenants
+            SET website_url  = :url,
+                crawl_config = :config::jsonb,
+                updated_at   = NOW()
+            WHERE id = :tenant_id
+        """),
+        {
+            "url":       url_str,
+            "config":    f'{{"max_pages": {body.max_pages}, '
+                         f'"max_depth": {body.max_depth}, '
+                         f'"recrawl_interval_hours": {body.recrawl_interval_hours}}}',
+            "tenant_id": current_user.tenant_id,
+        },
+    )
+
+    # Trigger first crawl immediately
+    from workers.celery.tasks.ingestion_tasks import crawl_and_ingest_website
+    crawl_and_ingest_website.delay(current_user.tenant_id)
+
+    logger.info(
+        "website_crawl_registered",
+        tenant_id=current_user.tenant_id,
+        url=url_str,
+    )
+    return {
+        "website_url":            url_str,
+        "status":                 "crawl_queued",
+        "max_pages":              body.max_pages,
+        "max_depth":              body.max_depth,
+        "recrawl_interval_hours": body.recrawl_interval_hours,
+        "message": (
+            "Website registered. First crawl queued — every page will be "
+            "automatically chunked, embedded, gap-analysed, and AI-written. "
+            f"Re-crawl runs every {body.recrawl_interval_hours}h with no further action needed."
+        ),
+    }
+
+
+@router.get("/crawl/status")
+async def get_crawl_status(
+    current_user: CurrentUser = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Return the current website crawl registration and last crawl timestamp
+    for this tenant.
+    """
+    result = await db.execute(
+        text("""
+            SELECT website_url, crawl_config, last_crawled_at
+            FROM tenants
+            WHERE id = :tenant_id
+        """),
+        {"tenant_id": current_user.tenant_id},
+    )
+    row = result.fetchone()
+    if not row or not row.website_url:
+        return {"registered": False, "website_url": None, "last_crawled_at": None}
+
+    return {
+        "registered":       True,
+        "website_url":      row.website_url,
+        "crawl_config":     row.crawl_config,
+        "last_crawled_at":  row.last_crawled_at.isoformat() if row.last_crawled_at else None,
+    }

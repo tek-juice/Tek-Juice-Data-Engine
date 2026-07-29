@@ -89,5 +89,10 @@ celery_app.conf.update(
             "task": "tasks.sync_data_pool",
             "schedule": 900,    # 15 minutes
         },
+        # ── Automated website crawl — zero human effort after URL registration ──
+        "crawl-tenant-websites-daily": {
+            "task": "tasks.crawl_all_tenant_websites",
+            "schedule": 86400,  # 24 hours — re-crawls every tenant's site daily
+        },
     },
 )

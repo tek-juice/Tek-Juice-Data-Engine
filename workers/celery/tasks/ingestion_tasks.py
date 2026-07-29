@@ -132,3 +132,166 @@ def chunk_document(self, document_id: str, tenant_id: str) -> dict:
     except Exception as exc:
         logger.error("chunking_failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc)
+
+
+# ── Automated Website Crawl & Ingest ─────────────────────────────────────────
+
+@shared_task(
+    name="tasks.crawl_and_ingest_website",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=300,
+    soft_time_limit=1800,
+    time_limit=2100,
+)
+def crawl_and_ingest_website(self, tenant_id: str) -> dict:
+    """
+    Automatically crawl a tenant's registered website and ingest every page
+    through the full pipeline (chunk → embed → gap → write → webhook).
+
+    Called by:
+      - tasks.crawl_all_tenant_websites  (daily Celery beat sweep)
+      - POST /api/v1/ingest/crawl        (on-demand when tenant registers URL)
+
+    Steps:
+      1. Load tenant's website_url from DB.  Skip if not set.
+      2. Use SiteCrawler to fetch all pages (respects robots.txt, handles SPAs).
+      3. For each page: create a document record and dispatch the existing
+         preprocess → chunk → embed → store → notify pipeline.
+      4. Update tenants.last_crawled_at so the next batch sweep skips
+         recently crawled tenants.
+    """
+    import asyncio
+
+    async def _run() -> dict:
+        from configs.database import AsyncSessionLocal
+        from sqlalchemy import text
+        from services.ingestion_service.crawlers.site_crawler import SiteCrawler
+        from services.ingestion_service.upload_handlers.document_handler import (
+            create_document_record,
+            dispatch_processing_pipeline,
+        )
+
+        async with AsyncSessionLocal() as session:
+            row = await session.execute(
+                text("""
+                    SELECT website_url, crawl_config
+                    FROM tenants
+                    WHERE id = :tenant_id AND is_active = TRUE
+                """),
+                {"tenant_id": tenant_id},
+            )
+            tenant = row.fetchone()
+
+        if not tenant or not tenant.website_url:
+            logger.info("crawl_skipped_no_url", tenant_id=tenant_id)
+            return {"tenant_id": tenant_id, "skipped": True, "reason": "no_website_url"}
+
+        cfg         = tenant.crawl_config or {}
+        max_pages   = int(cfg.get("max_pages",  50))
+        max_depth   = int(cfg.get("max_depth",   3))
+        website_url = tenant.website_url.rstrip("/")
+
+        logger.info("crawl_started", tenant_id=tenant_id, url=website_url,
+                    max_pages=max_pages, max_depth=max_depth)
+
+        crawler  = SiteCrawler(max_pages=max_pages, max_depth=max_depth)
+        ingested = 0
+        failed   = 0
+
+        async for page in crawler.crawl(website_url):
+            if not page.text or len(page.text.strip()) < 100:
+                continue  # skip near-empty pages (nav-only, 404s, etc.)
+            try:
+                # Encode page text as bytes so create_document_record can store it
+                content   = page.text.encode("utf-8")
+                filename  = (page.title or page.url.split("/")[-1] or "page").strip()[:200] + ".html"
+
+                async with AsyncSessionLocal() as session:
+                    doc = await create_document_record(
+                        db=session,
+                        tenant_id=tenant_id,
+                        filename=filename,
+                        source_type="html",
+                        content=content,
+                        mime_type="text/html",
+                    )
+                    doc_id = str(doc.id)
+
+                await dispatch_processing_pipeline(
+                    document_id=doc_id,
+                    tenant_id=tenant_id,
+                )
+                ingested += 1
+                logger.info("page_ingested", tenant_id=tenant_id, url=page.url, doc_id=doc_id)
+
+            except Exception as exc:
+                failed += 1
+                logger.warning("page_ingest_failed", tenant_id=tenant_id,
+                               url=getattr(page, "url", "?"), error=str(exc))
+
+        # Stamp last_crawled_at so the daily batch skips this tenant until tomorrow
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                text("UPDATE tenants SET last_crawled_at = NOW() WHERE id = :tid"),
+                {"tid": tenant_id},
+            )
+            await session.commit()
+
+        logger.info("crawl_complete", tenant_id=tenant_id,
+                    url=website_url, ingested=ingested, failed=failed)
+        return {
+            "tenant_id": tenant_id,
+            "website_url": website_url,
+            "pages_ingested": ingested,
+            "pages_failed": failed,
+        }
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:
+        logger.error("crawl_and_ingest_failed", tenant_id=tenant_id, error=str(exc))
+        raise self.retry(exc=exc)
+
+
+@shared_task(name="tasks.crawl_all_tenant_websites", bind=True)
+def crawl_all_tenant_websites(self) -> dict:
+    """
+    Daily batch sweep: dispatch crawl_and_ingest_website for every active
+    tenant that has a website_url registered and hasn't been crawled in
+    the last recrawl_interval_hours (default 24h).
+
+    This is the heartbeat that makes the Engine fully autonomous —
+    every registered tenant's website is kept perpetually up-to-date
+    with zero human effort after initial URL registration.
+    """
+    import asyncio
+
+    async def _run() -> dict:
+        from configs.database import AsyncSessionLocal
+        from sqlalchemy import text
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                text("""
+                    SELECT id
+                    FROM tenants
+                    WHERE is_active    = TRUE
+                      AND website_url IS NOT NULL
+                      AND (
+                            last_crawled_at IS NULL
+                            OR last_crawled_at < NOW() - INTERVAL '1 hour' *
+                               COALESCE((crawl_config->>'recrawl_interval_hours')::int, 24)
+                          )
+                    ORDER BY COALESCE(last_crawled_at, '1970-01-01'::timestamptz) ASC
+                """)
+            )
+            rows = result.fetchall()
+
+        for row in rows:
+            crawl_and_ingest_website.delay(str(row.id))
+
+        logger.info("crawl_all_tenants_dispatched", count=len(rows))
+        return {"dispatched": len(rows)}
+
+    return asyncio.run(_run())
