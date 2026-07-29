@@ -64,19 +64,18 @@ ADMIN_EMAIL=$(grep "^ADMIN_EMAIL=" .env 2>/dev/null | cut -d= -f2- | tr -d '"' |
 ADMIN_PASSWORD=$(grep "^ADMIN_PASSWORD=" .env 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
 
 # Fallback defaults if not set in .env
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@tekjuice.io}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-nobert.ndungutse@tekjuice.co.uk}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-TekJuice@Admin2026!}"
 
-# Hash the password using bcrypt inside the running embedding container
-# (it has passlib installed). Falls back to a pre-computed hash if unavailable.
-HASHED=$(docker exec data_engine_embedding python -c "
-from passlib.context import CryptContext
-ctx = CryptContext(schemes=['bcrypt'], deprecated='auto')
-print(ctx.hash('${ADMIN_PASSWORD}'))
+# Hash the password using the same bcrypt path that configs/security.py uses at runtime.
+# Using the gateway container (always running) via configs.security.hash_password.
+HASHED=$(docker exec data_engine_gateway python -c "
+from configs.security import hash_password
+print(hash_password('${ADMIN_PASSWORD}'))
 " 2>/dev/null || echo "")
 
 if [ -z "$HASHED" ]; then
-    err "Could not hash password — make sure data_engine_embedding container is running"
+    err "Could not hash password — make sure data_engine_gateway container is running"
 fi
 
 docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" <<SQL

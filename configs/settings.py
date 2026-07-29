@@ -145,7 +145,13 @@ class Settings(BaseSettings):
     hnsw_m: int = 16
     hnsw_ef_construction: int = 64
 
-    # ── Security 
+    # ── Google OAuth 2.0
+    # Credentials from https://console.cloud.google.com → APIs & Services → Credentials.
+    # Authorised redirect URI to register: <BACKEND_URL>/auth/oauth/google/callback
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    # ── Security
     jwt_secret_key: str = Field(..., min_length=32)
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60

@@ -5,15 +5,16 @@ Phase 3: Central Command — API Manager.
 """
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.database import get_db_session
 from configs.security import (
-    verify_password, create_access_token, create_refresh_token,
+    verify_password, hash_password, create_access_token, create_refresh_token,
     decode_token, generate_api_key, hash_api_key,
 )
 from shared.authentication.jwt_handler import CurrentUser
@@ -34,6 +35,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    full_name: str = Field(default="", max_length=200)
+
+
 class APIKeyCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
 
@@ -44,6 +51,225 @@ class APIKeyResponse(BaseModel):
     prefix: str
     name: str
     message: str = "Store this key securely — it will not be shown again."
+
+
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(
+    body: RegisterRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Register a new user under the default tenant and return tokens immediately."""
+    # Check email not already taken
+    existing = await db.execute(
+        text("SELECT id FROM users WHERE email = :email"),
+        {"email": body.email},
+    )
+    if existing.fetchone():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with that email already exists.",
+        )
+
+    # Resolve the default tenant (first active tenant in the system)
+    tenant_row = await db.execute(
+        text("SELECT id FROM tenants WHERE is_active = TRUE ORDER BY created_at LIMIT 1")
+    )
+    tenant = tenant_row.fetchone()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No active tenant found. Contact your administrator.",
+        )
+
+    import uuid
+    user_id = str(uuid.uuid4())
+    await db.execute(
+        text("""
+            INSERT INTO users (id, tenant_id, email, hashed_password, full_name, role)
+            VALUES (:id, :tenant_id, :email, :hashed_password, :full_name, 'viewer')
+        """),
+        {
+            "id":              user_id,
+            "tenant_id":       str(tenant.id),
+            "email":           body.email,
+            "hashed_password": hash_password(body.password),
+            "full_name":       body.full_name,
+        },
+    )
+    logger.info("user_registered", user_id=user_id, email=body.email)
+
+    from configs.settings import get_settings
+    s = get_settings()
+    access_token  = create_access_token(user_id, str(tenant.id), extra_claims={"role": "viewer"})
+    refresh_token = create_refresh_token(user_id, str(tenant.id))
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=s.jwt_access_token_expire_minutes * 60,
+    )
+
+
+# ── Google OAuth 2.0 ──────────────────────────────────────────────────────────
+_GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+@router.get("/oauth/google")
+async def google_oauth_initiate(
+    request: Request,
+    redirect_uri: str = Query(..., description="Frontend origin, e.g. https://app.example.com"),
+):
+    """
+    Redirect the browser to Google's OAuth consent screen.
+
+    Pass `redirect_uri` as the frontend origin (e.g. `https://app.example.com`).
+    Google will call back to `<backend>/auth/oauth/google/callback`, which then
+    redirects to `{redirect_uri}/auth/callback?access_token=...&refresh_token=...`.
+
+    Register `<BACKEND_URL>/auth/oauth/google/callback` as an Authorised
+    redirect URI in your Google Cloud Console project.
+    """
+    from configs.settings import get_settings
+    import urllib.parse
+    s = get_settings()
+
+    if not s.google_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Google OAuth is not configured on this instance. Use email/password login.",
+        )
+
+    # Encode the frontend origin in `state` so the callback knows where to redirect.
+    state = urllib.parse.quote(redirect_uri.rstrip("/"), safe="")
+    # Backend callback — must be registered in Google Cloud Console exactly as-is.
+    backend_callback = str(request.base_url).rstrip("/") + "/auth/oauth/google/callback"
+
+    auth_url = _GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode({
+        "client_id":     s.google_client_id,
+        "redirect_uri":  backend_callback,
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "state":         state,
+        "access_type":   "online",
+        "prompt":        "select_account",
+    })
+    return RedirectResponse(auth_url)
+
+
+@router.get("/oauth/google/callback")
+async def google_oauth_callback(
+    request: Request,
+    code: str = Query(...),
+    state: str = Query(...),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Google OAuth callback.  Exchanges `code` for tokens, upserts the user,
+    issues Data Engine JWT tokens, and redirects to `{frontend_origin}/auth/callback`.
+    """
+    from configs.settings import get_settings
+    import urllib.parse, uuid, httpx
+    s = get_settings()
+
+    if not s.google_client_id:
+        raise HTTPException(status_code=501, detail="Google OAuth not configured.")
+
+    # Recover the frontend origin from state.
+    frontend_origin = urllib.parse.unquote(state).rstrip("/")
+    backend_callback = str(request.base_url).rstrip("/") + "/auth/oauth/google/callback"
+
+    # Exchange authorization code for tokens.
+    async with httpx.AsyncClient() as client:
+        token_resp = await client.post(
+            _GOOGLE_TOKEN_URL,
+            data={
+                "code":          code,
+                "client_id":     s.google_client_id,
+                "client_secret": s.google_client_secret,
+                "redirect_uri":  backend_callback,
+                "grant_type":    "authorization_code",
+            },
+        )
+
+    if token_resp.status_code != 200:
+        logger.error("google_oauth_token_exchange_failed", status=token_resp.status_code)
+        raise HTTPException(status_code=502, detail="Google token exchange failed.")
+
+    google_tokens = token_resp.json()
+    access_token_google = google_tokens.get("access_token")
+
+    # Fetch user profile.
+    async with httpx.AsyncClient() as client:
+        userinfo_resp = await client.get(
+            _GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token_google}"},
+        )
+
+    if userinfo_resp.status_code != 200:
+        logger.error("google_oauth_userinfo_failed", status=userinfo_resp.status_code)
+        raise HTTPException(status_code=502, detail="Failed to fetch Google user info.")
+
+    userinfo = userinfo_resp.json()
+    email     = userinfo.get("email")
+    full_name = userinfo.get("name", "")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account has no email address.")
+
+    # Resolve or create the user.
+    result = await db.execute(
+        text("SELECT id, tenant_id, role, is_active FROM users WHERE email = :email"),
+        {"email": email},
+    )
+    user = result.fetchone()
+
+    if user:
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account is inactive.")
+        user_id    = str(user.id)
+        tenant_id  = str(user.tenant_id)
+        role       = user.role
+    else:
+        # Auto-register under the default tenant.
+        tenant_row = await db.execute(
+            text("SELECT id FROM tenants WHERE is_active = TRUE ORDER BY created_at LIMIT 1")
+        )
+        tenant = tenant_row.fetchone()
+        if not tenant:
+            raise HTTPException(status_code=503, detail="No active tenant found.")
+
+        user_id   = str(uuid.uuid4())
+        tenant_id = str(tenant.id)
+        role      = "viewer"
+        await db.execute(
+            text("""
+                INSERT INTO users (id, tenant_id, email, hashed_password, full_name, role)
+                VALUES (:id, :tenant_id, :email, '', :full_name, 'viewer')
+            """),
+            {"id": user_id, "tenant_id": tenant_id, "email": email, "full_name": full_name},
+        )
+        logger.info("google_oauth_user_created", user_id=user_id, email=email)
+
+    await db.execute(
+        text("UPDATE users SET last_login_at = NOW() WHERE id = :id"),
+        {"id": user_id},
+    )
+
+    de_access_token  = create_access_token(user_id, tenant_id, extra_claims={"role": role})
+    de_refresh_token = create_refresh_token(user_id, tenant_id)
+
+    logger.info("google_oauth_login", user_id=user_id, email=email)
+
+    # Redirect to frontend /auth/callback with tokens in query string.
+    callback_url = (
+        f"{frontend_origin}/auth/callback"
+        f"?access_token={de_access_token}"
+        f"&refresh_token={de_refresh_token}"
+        f"&token_type=bearer"
+        f"&expires_in={s.jwt_access_token_expire_minutes * 60}"
+    )
+    return RedirectResponse(callback_url)
 
 
 @router.post("/token", response_model=TokenResponse)

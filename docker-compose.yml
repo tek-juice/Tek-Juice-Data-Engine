@@ -18,6 +18,12 @@ x-docker-env: &docker-env
   REDIS_PORT: 6379
   CELERY_BROKER_URL: redis://redis:6379/0
   CELERY_RESULT_BACKEND: redis://redis:6379/1
+  # CORS: allow the frontend origin in all environments.
+  # Add further origins as comma-separated values if needed.
+  GATEWAY_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:8000,http://localhost:6145,http://localhost:6146"
+  # Google OAuth 2.0 — register <backend_url>/auth/oauth/google/callback in Google Cloud Console.
+  GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+  GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
   # Service-to-service routing: api_gateway proxy/health use these to reach
   # each downstream service by its Docker Compose service name, not localhost.
   SERVICE_HOST_INGESTION_SERVICE: ingestion_service

@@ -43,6 +43,9 @@ SERVICE_BASE_URLS = {
     "leo":        _svc_url("geo_engine",          settings.geo_engine_port),
     # VSEO: multi-modal image/video optimiser endpoints
     "vseo":       _svc_url("geo_engine",          settings.geo_engine_port),
+    # Synchronization service — handles sync runs and cache invalidation
+    "sync":       _svc_url("synchronization",     settings.sync_service_port),
+    "cache":      _svc_url("synchronization",     settings.sync_service_port),
 }
 
 
