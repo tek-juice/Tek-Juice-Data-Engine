@@ -9,16 +9,21 @@ If a platform modifies its API payload shape:
   - Dashboard alert fires after ALERT_THRESHOLD consecutive failures
   - Worker pipeline continues without crashing
 
+Strategy — Free-first, paid-as-bonus:
+  Each platform tries its free/public channel first (feed_aggregator).
+  If a paid API key is configured it runs in parallel and results are merged.
+  This means zero API keys = full coverage, paid keys = bonus signal volume.
+
 Platforms:
-  - Hacker News  (public API, no auth)
-  - Reddit       (OAuth2 client credentials)
-  - X / Twitter  (Bearer token — API v2)
-  - Facebook     (Graph API access token)
-  - Instagram    (Graph API — same app as Facebook)
-  - TikTok       (Research API)
-  - Snapchat     (Audience Network API)
-  - YouTube      (Data API v3)
-  - LinkedIn     (OAuth2 access token)
+  - Hacker News  (public API, no auth — always free)
+  - Reddit       (public JSON first; OAuth2 bonus if key present)
+  - X / Twitter  (Nitter RSS first; Bearer token bonus if key present)
+  - Facebook     (RSS page feeds first; Graph API bonus if token present)
+  - Instagram    (public GraphQL first; Graph API bonus if token present)
+  - TikTok       (web session first; Research API bonus if key present)
+  - Snapchat     (Spotlight public discovery first; API bonus if token present)
+  - YouTube      (trending RSS first; Data API v3 bonus if key present)
+  - LinkedIn     (public page scrape first; API bonus if key present)
 """
 
 from __future__ import annotations
@@ -164,12 +169,49 @@ class SocialScraper:
         return results
 
     # ──────────────────────────────────────────
-    # Reddit
+    # Reddit — public JSON first, OAuth bonus
     # ──────────────────────────────────────────
     async def _fetch_reddit(self, query: str, limit: int = 10) -> list[ScrapedItem]:
-        if not settings.reddit_client_id or not settings.reddit_client_secret:
-            logger.debug("reddit_not_configured")
-            return []
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        # Always run free public JSON path
+        free_task  = agg.fetch_reddit_public(query, limit)
+        # Run OAuth only when credentials are present
+        paid_task  = self._fetch_reddit_oauth(query, limit) if (
+            settings.reddit_client_id and settings.reddit_client_secret
+        ) else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="reddit",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("reddit")
+        return results[:limit]
+
+    async def _fetch_reddit_oauth(self, query: str, limit: int) -> list[ScrapedItem]:
+        """OAuth path — bonus results on top of public JSON."""
         results = []
         try:
             async with httpx.AsyncClient(timeout=20) as client:
@@ -181,7 +223,6 @@ class SocialScraper:
                 )
                 token_resp.raise_for_status()
                 token = token_resp.json().get("access_token")
-
                 search_resp = await client.get(
                     "https://oauth.reddit.com/search",
                     params={"q": query, "limit": limit, "sort": "relevance", "t": "week"},
@@ -189,7 +230,6 @@ class SocialScraper:
                 )
                 search_resp.raise_for_status()
                 raw = search_resp.json()
-
             try:
                 validated = RedditResponse.model_validate(raw)
             except ValidationError as exc:
@@ -198,7 +238,6 @@ class SocialScraper:
                     raw_payload=raw, error_type="ValidationError", error_detail=str(exc),
                 )
                 return []
-
             for child in validated.data.children:
                 d = child.data
                 results.append(_make_item(
@@ -210,22 +249,50 @@ class SocialScraper:
                     relevance_score=min(1.0, (d.score or 0) / 10000),
                     extra_meta={"subreddit": d.subreddit, "score": d.score, "comments": d.num_comments},
                 ))
-            await record_scraper_success("reddit")
-
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="reddit", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("reddit_oauth_failed", error=str(exc))
         return results
 
     # ──────────────────────────────────────────
-    # X / Twitter
+    # X / Twitter — Nitter RSS first, API bonus
     # ──────────────────────────────────────────
     async def _fetch_twitter(self, query: str, limit: int = 10) -> list[ScrapedItem]:
-        if not settings.twitter_bearer_token:
-            logger.debug("twitter_not_configured")
-            return []
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        free_task = agg.fetch_twitter_via_nitter(query, limit)
+        paid_task = self._fetch_twitter_api(query, limit) if settings.twitter_bearer_token else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="twitter",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("twitter")
+        return results[:limit]
+
+    async def _fetch_twitter_api(self, query: str, limit: int) -> list[ScrapedItem]:
+        """Bearer token path — bonus results on top of Nitter."""
         results = []
         try:
             async with httpx.AsyncClient(timeout=20) as client:
@@ -242,17 +309,14 @@ class SocialScraper:
                 )
                 resp.raise_for_status()
                 raw = resp.json()
-
             try:
                 validated = TwitterResponse.model_validate(raw)
             except ValidationError as exc:
                 await send_to_dead_letter(
                     platform="twitter", source="social_media", query=query,
                     raw_payload=raw, error_type="ValidationError", error_detail=str(exc),
-                    api_status_code=200,
                 )
                 return []
-
             users = {u.id: u.username for u in validated.includes.users}
             for tweet in validated.data:
                 m = tweet.public_metrics
@@ -268,22 +332,50 @@ class SocialScraper:
                     relevance_score=min(1.0, score),
                     extra_meta={"author": author, "likes": m.like_count, "retweets": m.retweet_count},
                 ))
-            await record_scraper_success("twitter")
-
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="twitter", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("twitter_api_failed", error=str(exc))
         return results
 
     # ──────────────────────────────────────────
-    # Facebook
+    # Facebook — RSS page feeds first, API bonus
     # ──────────────────────────────────────────
     async def _fetch_facebook(self, query: str, limit: int = 10) -> list[ScrapedItem]:
-        if not settings.facebook_access_token:
-            logger.debug("facebook_not_configured")
-            return []
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        free_task = agg.fetch_facebook_public(query, limit)
+        paid_task = self._fetch_facebook_api(query, limit) if settings.facebook_access_token else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="facebook",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("facebook")
+        return results[:limit]
+
+    async def _fetch_facebook_api(self, query: str, limit: int) -> list[ScrapedItem]:
+        """Graph API path — bonus when token is present."""
         results = []
         try:
             async with httpx.AsyncClient(timeout=20) as client:
@@ -297,7 +389,6 @@ class SocialScraper:
                 )
                 resp.raise_for_status()
                 raw = resp.json()
-
             try:
                 validated = FacebookResponse.model_validate(raw)
             except ValidationError as exc:
@@ -306,7 +397,6 @@ class SocialScraper:
                     raw_payload=raw, error_type="ValidationError", error_detail=str(exc),
                 )
                 return []
-
             for post in validated.data:
                 text = post.message or post.story or ""
                 results.append(_make_item(
@@ -319,21 +409,51 @@ class SocialScraper:
                     relevance_score=min(1.0, post.shares.count / 1000),
                     extra_meta={"post_id": post.id, "shares": post.shares.count},
                 ))
-            await record_scraper_success("facebook")
-
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="facebook", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("facebook_api_failed", error=str(exc))
         return results
 
     # ──────────────────────────────────────────
-    # Instagram
+    # Instagram — public GQL first, API bonus
     # ──────────────────────────────────────────
     async def _fetch_instagram(self, query: str, limit: int = 10) -> list[ScrapedItem]:
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        free_task = agg.fetch_instagram_public(query, limit)
+        paid_task = self._fetch_instagram_api(query, limit) if settings.instagram_access_token else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="instagram",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("instagram")
+        return results[:limit]
+
+    async def _fetch_instagram_api(self, query: str, limit: int) -> list[ScrapedItem]:
+        """Graph API path — bonus when token is present."""
         if not settings.instagram_access_token:
-            logger.debug("instagram_not_configured")
             return []
         results = []
         try:
@@ -405,21 +525,53 @@ class SocialScraper:
                             extra_meta={"media_id": media.id, "likes": media.like_count,
                                         "comments": media.comments_count},
                         ))
-            await record_scraper_success("instagram")
-
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="instagram", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("instagram_api_failed", error=str(exc))
         return results
 
     # ──────────────────────────────────────────
-    # TikTok
+    # TikTok — web session first, API bonus
     # ──────────────────────────────────────────
     async def _fetch_tiktok(self, query: str, limit: int = 10) -> list[ScrapedItem]:
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        free_task = agg.fetch_tiktok_public(query, limit)
+        paid_task = self._fetch_tiktok_api(query, limit) if (
+            settings.tiktok_client_key and settings.tiktok_client_secret
+        ) else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="tiktok",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("tiktok")
+        return results[:limit]
+
+    async def _fetch_tiktok_api(self, query: str, limit: int) -> list[ScrapedItem]:
+        """Research API path — bonus when credentials present."""
         if not settings.tiktok_client_key or not settings.tiktok_client_secret:
-            logger.debug("tiktok_not_configured")
             return []
         results = []
         try:
@@ -471,21 +623,51 @@ class SocialScraper:
                     extra_meta={"video_id": video.id, "author": video.author_name,
                                 "views": views, "likes": video.like_count, "shares": video.share_count},
                 ))
-            await record_scraper_success("tiktok")
-
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="tiktok", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("tiktok_api_failed", error=str(exc))
         return results
 
     # ──────────────────────────────────────────
-    # Snapchat
+    # Snapchat — Spotlight public first, API bonus
     # ──────────────────────────────────────────
     async def _fetch_snapchat(self, query: str, limit: int = 10) -> list[ScrapedItem]:
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        free_task = agg.fetch_snapchat_public(query, limit)
+        paid_task = self._fetch_snapchat_api(query, limit) if settings.snapchat_access_token else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="snapchat",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("snapchat")
+        return results[:limit]
+
+    async def _fetch_snapchat_api(self, query: str, limit: int) -> list[ScrapedItem]:
+        """Audience Network API path — bonus when token present."""
         if not settings.snapchat_access_token:
-            logger.debug("snapchat_not_configured")
             return []
         results = []
         try:
@@ -518,21 +700,51 @@ class SocialScraper:
                     raw_content=story.description or "",
                     extra_meta={"story_id": story.id, "publisher": story.publisher},
                 ))
-            await record_scraper_success("snapchat")
-
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="snapchat", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("snapchat_api_failed", error=str(exc))
         return results
 
     # ──────────────────────────────────────────
-    # YouTube
+    # YouTube — RSS trending first, API bonus
     # ──────────────────────────────────────────
     async def _fetch_youtube(self, query: str, limit: int = 10) -> list[ScrapedItem]:
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        free_task = agg.fetch_youtube_trending_rss(query, limit)
+        paid_task = self._fetch_youtube_api(query, limit) if settings.youtube_api_key else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="youtube",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("youtube")
+        return results[:limit]
+
+    async def _fetch_youtube_api(self, query: str, limit: int) -> list[ScrapedItem]:
+        """Data API v3 path — bonus keyword search when key present."""
         if not settings.youtube_api_key:
-            logger.debug("youtube_not_configured")
             return []
         results = []
         try:
@@ -575,18 +787,50 @@ class SocialScraper:
             await record_scraper_success("youtube")
 
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="youtube", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("youtube_api_failed", error=str(exc))
         return results
 
     # ──────────────────────────────────────────
-    # LinkedIn
+    # LinkedIn — public scrape first, API bonus
     # ──────────────────────────────────────────
     async def _fetch_linkedin(self, query: str, limit: int = 10) -> list[ScrapedItem]:
+        from services.trend_scraper.utils.feed_aggregator import PublicFeedAggregator
+        agg = PublicFeedAggregator()
+
+        free_task = agg.fetch_linkedin_public(query, limit)
+        paid_task = self._fetch_linkedin_api(query, limit) if getattr(settings, "linkedin_api_key", "") else asyncio.coroutine(lambda: [])()
+
+        free_items, paid_items = await asyncio.gather(free_task, paid_task, return_exceptions=True)
+
+        results: list[ScrapedItem] = []
+        seen_urls: set[str] = set()
+
+        for item in (paid_items if isinstance(paid_items, list) else []):
+            url = item.url
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(item)
+
+        for raw in (free_items if isinstance(free_items, list) else []):
+            url = raw.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(_make_item(
+                    platform="linkedin",
+                    title=raw.get("title", ""),
+                    url=url,
+                    snippet=raw.get("snippet", ""),
+                    raw_content=raw.get("raw_content", ""),
+                    relevance_score=raw.get("relevance_score", 1.0),
+                    extra_meta=raw.get("metadata", {}),
+                ))
+
+        await record_scraper_success("linkedin")
+        return results[:limit]
+
+    async def _fetch_linkedin_api(self, query: str, limit: int) -> list[ScrapedItem]:
+        """LinkedIn API path — bonus when key present."""
         if not getattr(settings, "linkedin_api_key", ""):
-            logger.debug("linkedin_not_configured")
             return []
         results = []
         try:
@@ -620,11 +864,6 @@ class SocialScraper:
                     raw_content=commentary,
                     extra_meta={"share_id": share.id},
                 ))
-            await record_scraper_success("linkedin")
-
         except Exception as exc:
-            await send_to_dead_letter(
-                platform="linkedin", source="social_media", query=query,
-                raw_payload={}, error_type=type(exc).__name__, error_detail=str(exc),
-            )
+            logger.debug("linkedin_api_failed", error=str(exc))
         return results

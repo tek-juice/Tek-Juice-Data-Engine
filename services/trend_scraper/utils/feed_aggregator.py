@@ -58,7 +58,21 @@ NITTER_INSTANCES = [
     "https://nitter.poast.org",
     "https://nitter.1d4.us",
     "https://nitter.lunar.icu",
+    "https://nitter.tiekoetter.com",
+    "https://nitter.unixfox.eu",
 ]
+
+# Snapchat Spotlight — public discovery (no auth)
+SNAPCHAT_SPOTLIGHT_URL = "https://www.snapchat.com/spotlight"
+SNAPCHAT_SEARCH_URL    = "https://story.snapchat.com/search"
+
+# Facebook public RSS page feeds (via RSS.app or direct)
+FACEBOOK_RSS_FEEDS = [
+    "https://www.facebook.com/feeds/page.php?format=rss20&id=",
+]
+
+# LinkedIn public job/post feeds (no auth)
+LINKEDIN_PUBLIC_SEARCH = "https://www.linkedin.com/search/results/content/"
 
 # Teddit/Libreddit instances — public Reddit mirrors
 TEDDIT_INSTANCES = [
@@ -561,6 +575,236 @@ class PublicFeedAggregator:
             logger.debug("instagram_public_failed", tag=tag, error=str(exc))
 
         await smart_delay()
+        return results[:limit]
+
+    # ── Facebook public RSS feeds (no token) ─────────────────────────────────
+
+    async def fetch_facebook_public(
+        self, query: str, limit: int = 20
+    ) -> list[dict]:
+        """
+        Fetch Facebook-adjacent content via public RSS feeds and news
+        aggregators that surface Facebook post discussions.
+        Uses Google News RSS (which indexes Facebook posts) + Reddit
+        discussions that link to Facebook content.
+        """
+        results: list[dict] = []
+        query_encoded = urllib.parse.quote(query)
+
+        feeds = [
+            # Google News RSS — surfaces articles shared heavily on Facebook
+            f"https://news.google.com/rss/search?q={query_encoded}&hl=en-US&gl=US&ceid=US:en",
+            # Bing News RSS
+            f"https://www.bing.com/news/search?q={query_encoded}&format=RSS",
+        ]
+
+        async with httpx.AsyncClient(timeout=20, headers=get_random_headers(),
+                                      follow_redirects=True) as client:
+            for feed_url in feeds:
+                if len(results) >= limit:
+                    break
+                try:
+                    resp = await client.get(feed_url)
+                    if resp.status_code != 200:
+                        continue
+                    items = self._parse_rss_feed(resp.text, platform="facebook", source="news_rss")
+                    # Only keep items that are likely social-media discussion
+                    results.extend(items[:limit // 2 + 1])
+                except Exception as exc:
+                    logger.debug("facebook_public_rss_failed", feed=feed_url, error=str(exc))
+
+        await smart_delay()
+        return results[:limit]
+
+    # ── Snapchat Spotlight public discovery ──────────────────────────────────
+
+    async def fetch_snapchat_public(
+        self, query: str, limit: int = 20
+    ) -> list[dict]:
+        """
+        Fetch Snapchat Spotlight trending via Snap's public search endpoint
+        and the public story search page. No auth required.
+        Falls back to scraping Spotlight public HTML.
+        """
+        results: list[dict] = []
+        profile = get_random_profile()
+        headers = {
+            **get_profile_http_headers(profile),
+            "Referer": "https://www.snapchat.com/",
+            "Origin":  "https://www.snapchat.com",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=20, headers=headers,
+                                          follow_redirects=True) as client:
+                # Try Snap's public story search API
+                resp = await client.get(
+                    "https://story.snapchat.com/api/v1/story_search",
+                    params={"query": query, "size": min(limit, 20)},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for story in data.get("results", [])[:limit]:
+                        title   = story.get("title", "")
+                        snap_id = story.get("snapId", "")
+                        url     = f"https://www.snapchat.com/spotlight/{snap_id}" if snap_id else ""
+                        if title or url:
+                            results.append(_item(
+                                "snapchat", title[:100], url,
+                                story.get("description", "")[:500],
+                                meta={"snap_id": snap_id, "channel": "spotlight_search"},
+                            ))
+                else:
+                    # Fallback: scrape Spotlight discover page for trending tags
+                    resp2 = await client.get(
+                        f"https://www.snapchat.com/spotlight?q={urllib.parse.quote(query)}",
+                        timeout=15,
+                    )
+                    if resp2.status_code == 200:
+                        html = resp2.text
+                        titles = re.findall(r'"title"\s*:\s*"([^"]{5,100})"', html)
+                        urls   = re.findall(r'"deeplink"\s*:\s*"(https://www\.snapchat\.com/spotlight/[^"]+)"', html)
+                        for i, title in enumerate(titles[:limit]):
+                            url = urls[i] if i < len(urls) else "https://www.snapchat.com/spotlight"
+                            results.append(_item(
+                                "snapchat", title, url,
+                                meta={"channel": "spotlight_html"},
+                            ))
+        except Exception as exc:
+            logger.debug("snapchat_public_failed", error=str(exc))
+
+        await smart_delay()
+        return results[:limit]
+
+    # ── LinkedIn public posts & jobs (no auth) ────────────────────────────────
+
+    async def fetch_linkedin_public(
+        self, query: str, limit: int = 20
+    ) -> list[dict]:
+        """
+        Fetch LinkedIn-adjacent content via:
+          1. LinkedIn public job/article search pages (ScraperAPI routed for JS render)
+          2. GitHub trending (strong proxy for professional/tech topics)
+          3. Medium RSS for professional long-form content
+        No LinkedIn API key required.
+        """
+        results: list[dict] = []
+
+        # Path 1: LinkedIn public search via ScraperAPI (handles JS render)
+        try:
+            from services.trend_scraper.utils.anti_block import build_scraperapi_url
+            query_encoded = urllib.parse.quote(query)
+            li_url = f"https://www.linkedin.com/search/results/content/?keywords={query_encoded}&origin=GLOBAL_SEARCH_HEADER"
+            scraper_url = build_scraperapi_url(li_url, render=True)
+
+            if scraper_url != li_url:  # ScraperAPI key is set
+                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                    resp = await client.get(scraper_url)
+                    if resp.status_code == 200:
+                        html = resp.text
+                        # Extract post titles from LinkedIn search results HTML
+                        post_titles = re.findall(
+                            r'class="[^"]*feed-shared-text[^"]*"[^>]*>\s*<[^>]*>\s*(.*?)\s*</',
+                            html, re.DOTALL
+                        )
+                        for i, text in enumerate(post_titles[:limit]):
+                            clean = re.sub(r"<[^>]+>", " ", text).strip()
+                            clean = re.sub(r"\s+", " ", clean)
+                            if clean and len(clean) > 10:
+                                results.append(_item(
+                                    "linkedin", clean[:100],
+                                    f"https://www.linkedin.com/search/results/content/?keywords={query_encoded}",
+                                    clean[:500],
+                                    meta={"channel": "scraperapi_render", "index": i},
+                                ))
+        except Exception as exc:
+            logger.debug("linkedin_scraperapi_failed", error=str(exc))
+
+        # Path 2: GitHub trending as professional signal (always free)
+        if len(results) < limit:
+            try:
+                github_items = await self.fetch_github_trending(query, limit - len(results))
+                for item in github_items:
+                    item["platform"] = "linkedin"  # re-label as professional signal
+                    item["metadata"]["original_platform"] = "github"
+                    results.append(item)
+            except Exception:
+                pass
+
+        # Path 3: Medium RSS for professional articles
+        if len(results) < limit:
+            try:
+                medium_items = await self.fetch_medium_rss(query, limit - len(results))
+                for item in medium_items:
+                    item["platform"] = "linkedin"
+                    item["metadata"]["original_platform"] = "medium"
+                    results.append(item)
+            except Exception:
+                pass
+
+        await smart_delay()
+        return results[:limit]
+
+    # ── YouTube keyword search via Data API v3 ────────────────────────────────
+
+    async def fetch_youtube_api_search(
+        self, query: str, limit: int = 20, api_key: str = ""
+    ) -> list[dict]:
+        """
+        YouTube Data API v3 keyword search — used when api_key is set.
+        Quota-aware: falls back to RSS trending if quota is exhausted (403).
+        Free tier: 10,000 units/day from Google Cloud Console.
+        """
+        if not api_key:
+            return await self.fetch_youtube_trending_rss(query, limit)
+
+        results: list[dict] = []
+        try:
+            async with httpx.AsyncClient(timeout=20, headers=get_random_headers()) as client:
+                resp = await client.get(
+                    "https://www.googleapis.com/youtube/v3/search",
+                    params={
+                        "part":          "snippet",
+                        "q":             query,
+                        "type":          "video",
+                        "order":         "relevance",
+                        "maxResults":    min(limit, 50),
+                        "publishedAfter": "2024-01-01T00:00:00Z",
+                        "key":           api_key,
+                    },
+                )
+                if resp.status_code == 403:
+                    # Quota exhausted — fall back to RSS trending silently
+                    logger.warning("youtube_api_quota_exhausted_falling_back_to_rss")
+                    return await self.fetch_youtube_trending_rss(query, limit)
+
+                resp.raise_for_status()
+                data = resp.json()
+
+                for item in data.get("items", [])[:limit]:
+                    snippet  = item.get("snippet", {})
+                    video_id = item.get("id", {}).get("videoId", "")
+                    title    = snippet.get("title", "")
+                    desc     = snippet.get("description", "")[:500]
+                    channel  = snippet.get("channelTitle", "")
+                    pub_at   = snippet.get("publishedAt")
+                    if video_id and title:
+                        results.append(_item(
+                            "youtube", title,
+                            f"https://www.youtube.com/watch?v={video_id}",
+                            desc, pub_at,
+                            meta={
+                                "video_id": video_id,
+                                "channel":  channel,
+                                "channel_id": snippet.get("channelId", ""),
+                                "channel": "youtube_api_search",
+                            },
+                        ))
+        except Exception as exc:
+            logger.debug("youtube_api_search_failed", error=str(exc))
+            # Full fallback to free RSS on any error
+            return await self.fetch_youtube_trending_rss(query, limit)
+
         return results[:limit]
 
     # ── Helpers ───────────────────────────────────────────────────────────────

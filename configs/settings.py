@@ -222,7 +222,7 @@ class Settings(BaseSettings):
     indirect_wikipedia_enabled: bool = True     # Wikipedia pageviews API
     indirect_medium_enabled: bool = True        # Medium tag RSS
     indirect_google_trends_enabled: bool = True # Google autocomplete + daily trends
-    indirect_instagram_public_enabled: bool = False  # Instagram public GQL (aggressive rate-limit, off by default)
+    indirect_instagram_public_enabled: bool = True   # Instagram public GQL (rate-limited but functional)
 
     # Nitter instance pool override (comma-separated; leave blank to use built-in list)
     nitter_instances: str = ""
