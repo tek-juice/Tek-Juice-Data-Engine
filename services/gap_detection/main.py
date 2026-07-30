@@ -25,6 +25,8 @@ from services.gap_detection.analyzer import GapAnalyzer, GapAnalysisResult
 from services.gap_detection.optimizer import GapOptimiser
 from services.gap_detection.recommendation import RecommendationEngine
 from services.gap_detection.content_clusters import ContentClusterBuilder
+from services.gap_detection.quality_score import QualityScoreEngine
+from services.gap_detection.rank_simulator import ContentRankSimulator
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
@@ -54,6 +56,25 @@ class GapResult(BaseModel):
     recommendations: list[str]
     before_coverage: float | None
     after_coverage: float | None
+
+
+class QualityScoreRequest(BaseModel):
+    """Request body for the Quality Score endpoint."""
+    content: str = Field(..., min_length=50, description="Full text content to score.")
+    title: str = Field(default="", description="Page or section title.")
+    meta_description: str = Field(default="", description="Meta description or excerpt.")
+    query: str = Field(default="", description="Primary target search query.")
+    target_keywords: list[str] = Field(default_factory=list, description="Keywords to rank for.")
+    monthly_search_volume: int = Field(default=0, ge=0, description="Optional MSV for traffic projections.")
+
+    model_config = {"json_schema_extra": {"example": {
+        "content": "Inventory management software reduces stockouts by 40% by tracking...",
+        "title": "Best Inventory Management Software for SMBs 2024",
+        "meta_description": "Discover how inventory software cuts costs by 40%...",
+        "query": "inventory management software",
+        "target_keywords": ["inventory management", "stock control", "warehouse software"],
+        "monthly_search_volume": 22000,
+    }}}
 
 
 class ContentClustersRequest(BaseModel):
@@ -127,6 +148,8 @@ register_exception_handlers(app)
 
 _recommender = RecommendationEngine()
 _cluster_builder = ContentClusterBuilder()
+_qs_engine = QualityScoreEngine()
+_rank_simulator = ContentRankSimulator()
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -360,6 +383,169 @@ async def get_close_action(
         raise
     except Exception as exc:
         logger.error("get_close_action_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post(
+    f"{API_PREFIX}/gaps/quality-score",
+    tags=["gaps"],
+    summary="Compute Google Ads Quality Score equivalent for content",
+)
+async def compute_quality_score(request: QualityScoreRequest = Body(...)):
+    """
+    Compute a Google Ads Quality Score equivalent (1–10) for a piece of content
+    and simulate where it ranks against Google paid ads.
+
+    ## Google Ad Rank → Organic Content Mapping
+
+    Google's Ad Rank = Bid × Quality Score × Threshold.
+    This engine applies the same 3-component formula to organic content:
+
+    | Google Ads Component | Organic Equivalent | Weight |
+    |---|---|---|
+    | Expected CTR | Snippet Attractiveness (title, meta, first sentence) | 30% |
+    | Ad Relevance | Keyword & Intent Alignment (coverage, AEO, FAQ schema) | 35% |
+    | Landing Page Experience | Content Experience (E-E-A-T, citations, structure) | 35% |
+
+    ## Quality Score Bands
+
+    | QS | Label | SERP Position |
+    |---|---|---|
+    | 9–10 | Perfect | #1 + AI Overview — above ALL paid ads |
+    | 8–9 | Strong | #1–#2 — above most paid ads |
+    | 6–8 | Average | #4–#5 — level with paid ads |
+    | 4–6 | Below Average | #6–#9 — below paid ads |
+    | 1–4 | Poor | Page 2+ — not competitive |
+
+    ## Response
+    Returns the full Quality Score breakdown, per-dimension status, priority fixes,
+    and a rank simulation showing exactly how many points are needed to beat each
+    paid ad position and reach #1.
+    """
+    try:
+        # Compute Quality Score
+        from services.aeo_engine.answer_scorer import AnswerScorer
+        from services.geo_engine.citations import CitationReadinessAnalyser
+        from services.seo_engine.keyword_analysis import KeywordAnalyser
+        import re
+
+        cit_analyser   = CitationReadinessAnalyser()
+        kw_analyser    = KeywordAnalyser()
+        aeo_scorer     = AnswerScorer()
+
+        cit_result = cit_analyser.analyse(request.content)
+        aeo_result = aeo_scorer.score(request.content, request.query)
+
+        kw_result  = kw_analyser.analyse(
+            content=request.content,
+            target_keywords=request.target_keywords,
+            title=request.title,
+            meta_description=request.meta_description,
+        ) if request.target_keywords else None
+
+        has_date  = bool(re.search(
+            r'\b(?:January|February|March|April|May|June|July|August|'
+            r'September|October|November|December|\d{4})\b',
+            request.content,
+        ))
+        has_stats = bool(re.search(
+            r'\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:%|percent|million|billion|x|times)\b',
+            request.content, re.IGNORECASE,
+        ))
+        has_author = bool(re.search(
+            r'\b(?:by|author|written by|published by)\s+[A-Z][a-z]+', request.content
+        ))
+
+        qs_result = _qs_engine.score(
+            content=request.content,
+            title=request.title,
+            meta_description=request.meta_description,
+            query=request.query,
+            target_keywords=request.target_keywords,
+            keyword_coverage_score=kw_result.coverage_score if kw_result else 0.5,
+            citation_score=cit_result.overall_score,
+            aeo_score=aeo_result.overall_score,
+            has_date=has_date,
+            has_stats=has_stats,
+            has_author=has_author,
+        )
+
+        # Simulate rank position vs paid ads
+        sim_result = _rank_simulator.simulate(
+            quality_score=qs_result.quality_score,
+            query=request.query,
+            priority_fixes=qs_result.priority_fixes,
+            monthly_search_volume=request.monthly_search_volume,
+        )
+
+        def dim_to_dict(d):
+            return {
+                "name":    d.name,
+                "score":   d.score,
+                "status":  d.status,
+                "signals": d.signals,
+                "issues":  d.issues,
+                "fixes":   d.fixes,
+            }
+
+        return {
+            # Headline
+            "quality_score":       qs_result.quality_score,
+            "label":               qs_result.label,
+            "summary":             qs_result.summary,
+            "beats_paid_ads":      qs_result.beats_paid_ads,
+            "projected_position":  qs_result.projected_position,
+            "score_to_next_band":  qs_result.score_to_next_band,
+
+            # 3 QS Dimensions
+            "dimensions": {
+                "snippet_attractiveness": dim_to_dict(qs_result.snippet_attractiveness),
+                "keyword_alignment":      dim_to_dict(qs_result.keyword_alignment),
+                "content_experience":     dim_to_dict(qs_result.content_experience),
+            },
+
+            # Action plan
+            "priority_fixes": qs_result.priority_fixes,
+            "quick_wins":     qs_result.quick_wins,
+
+            # Rank simulation vs paid ads
+            "rank_simulation": {
+                "estimated_position":      sim_result.estimated_position,
+                "position_label":          sim_result.position_label,
+                "estimated_ctr":           sim_result.estimated_ctr,
+                "paid_ads_beaten":         sim_result.paid_ads_beaten,
+                "beats_all_paid_ads":      sim_result.beats_all_paid_ads,
+                "ctr_multiplier":          sim_result.ctr_multiplier,
+                "traffic_multiplier":      sim_result.traffic_multiplier,
+                "qs_gap_to_position_1":    sim_result.qs_gap_to_top,
+                "target_qs_to_beat_ads":   sim_result.target_qs_to_beat_all_ads,
+                "ad_benchmarks": [
+                    {
+                        "ad_position":   b.ad_position,
+                        "ad_typical_qs": b.ad_typical_qs,
+                        "beats_this_ad": b.beats_this_ad,
+                        "qs_gap":        b.qs_gap,
+                        "notes":         b.notes,
+                    }
+                    for b in sim_result.ad_benchmarks
+                ],
+                "uplift_steps": sim_result.uplift_steps,
+            },
+
+            # Action plan to reach #1
+            "action_plan": sim_result.action_plan,
+
+            # Supporting scores
+            "supporting_scores": {
+                "citation_readiness":  cit_result.overall_score,
+                "aeo_answer_score":    aeo_result.overall_score,
+                "keyword_coverage":    kw_result.coverage_score if kw_result else None,
+                "word_count":          qs_result.word_count,
+            },
+        }
+
+    except Exception as exc:
+        logger.error("quality_score_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
 
 

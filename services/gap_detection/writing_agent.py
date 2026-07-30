@@ -46,24 +46,44 @@ settings = get_settings()
 
 # ── Prompt constants ──────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """You are a world-class SEO, GEO, and AEO content writer.
-Your sole job is to write a production-ready content SECTION that will:
-  1. Rank on the FIRST PAGE of Google and Bing for the target queries.
-  2. Be cited FIRST by AI engines (ChatGPT, Perplexity, Google AI Overviews).
-  3. Satisfy the FIRST SENTENCE RULE: open with a direct, factual answer —
-     "{Subject} is/provides/does {specific fact}." — no fluff openers.
-  4. Include at least one statistic, percentage, or measurable claim.
-  5. Use active voice throughout.
-  6. Be structured so an AI can excerpt the answer without reading the full page.
+_SYSTEM_PROMPT = """You are a world-class SEO, GEO, and AEO content writer whose output must
+out-compete Google's sponsored paid ads by achieving the equivalent of a perfect Google Ad
+Quality Score (QS 10/10) on every piece of content.
 
-Rules you must NEVER break:
-  - Do NOT start with "In this section", "Welcome", "This article", or "Today".
-  - Every paragraph must contain a standalone citable fact.
-  - If the intent is PROCEDURAL: number every step (1. 2. 3.).
-  - If the intent is COMPARATIVE: include a markdown comparison table.
-  - If the intent is QUANTITATIVE: lead with the most impactful number.
-  - If the intent is DEFINITIONAL: first sentence must be a subject-first definition.
-  - If the intent is FAQ/TROUBLESHOOTING: structure as Q: / A: pairs.
+Google uses three components to determine Ad Rank (and organic position):
+  1. EXPECTED CTR (Snippet Attractiveness) — your title/first-sentence must compel a click.
+  2. AD RELEVANCE (Keyword & Intent Alignment) — content must precisely answer the query intent.
+  3. LANDING PAGE EXPERIENCE (Content Experience) — E-E-A-T, structure, citation readiness.
+
+Your sole job is to maximise all three so this content:
+  - Ranks ABOVE all paid ads in organic position #1.
+  - Appears in Google AI Overviews — which displays ABOVE paid ads at zero cost.
+  - Is cited FIRST by AI engines (ChatGPT, Perplexity, Google AI Overviews, Bing Copilot, Claude, Gemini).
+
+QUALITY SCORE RULES you must NEVER break:
+
+  CTR/Snippet:
+    - FIRST SENTENCE RULE: open with a direct, factual answer — "{Subject} is/does/provides {specific fact}."
+      NO preambles: "In this...", "Welcome...", "This article...", "Today..." are BANNED.
+    - Title must include the primary keyword — Google bolds it in the SERP, directly driving CTR.
+    - Include at least one number or percentage in the first paragraph (proven +18% CTR lift).
+
+  Intent Alignment:
+    - Every query word must appear naturally in the content body within the first 150 words.
+    - Structure the opening paragraph (40-60 words) as a direct standalone answer.
+    - If the intent is PROCEDURAL: number every step (1. 2. 3.).
+    - If the intent is COMPARATIVE: include a markdown comparison table.
+    - If the intent is QUANTITATIVE: lead with the most impactful number.
+    - If the intent is DEFINITIONAL: first sentence must be a subject-first definition.
+    - If the intent is FAQ/TROUBLESHOOTING: structure as Q: / A: pairs.
+
+  Content Experience / E-E-A-T:
+    - Every paragraph must contain a standalone citable fact.
+    - Include at least 2 statistics, percentages, or measurable claims.
+    - Attribute at least one claim to a named source ("according to [Source]...").
+    - Use active voice throughout — passive voice reduces semantic clarity score.
+    - Add H2/H3 headings and bullet lists — required for featured snippet extraction.
+    - Be structured so an AI can excerpt the answer without reading the full page.
 
 Output format: plain text with markdown headings and lists only.
 Do NOT wrap in code fences. Do NOT add a preamble or sign-off."""
@@ -105,29 +125,35 @@ class ContentDraft:
     model_used: str
     provider_used: str
     generated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
-    geo_score: float = 0.0      # LLM visibility score (0-100) from GEO engine
-    aeo_score: float = 0.0      # Answer engine score (0-100) from AEO engine
-    composite_score: float = 0.0  # (geo_score + aeo_score) / 2
+    geo_score: float = 0.0           # LLM visibility score (0-100) from GEO engine
+    aeo_score: float = 0.0           # Answer engine score (0-100) from AEO engine
+    composite_score: float = 0.0     # (geo_score + aeo_score) / 2
+    quality_score: float = 0.0       # Google Ads Quality Score equivalent (1-10)
+    projected_position: str = ""     # e.g. "#1 above paid ads"
+    beats_paid_ads: bool = False      # True if quality_score >= 8.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "document_id":      self.document_id,
-            "tenant_id":        self.tenant_id,
-            "topic":            self.topic,
-            "intent":           self.intent,
-            "priority":         self.priority,
-            "draft_text":       self.draft_text,
-            "word_count":       self.word_count,
-            "query_variants":   self.query_variants,
-            "schema_types":     self.schema_types,
-            "authority_signals": self.authority_signals,
-            "content_brief":    self.content_brief,
-            "model_used":       self.model_used,
-            "provider_used":    self.provider_used,
-            "generated_at":     self.generated_at,
-            "geo_score":        self.geo_score,
-            "aeo_score":        self.aeo_score,
-            "composite_score":  self.composite_score,
+            "document_id":        self.document_id,
+            "tenant_id":          self.tenant_id,
+            "topic":              self.topic,
+            "intent":             self.intent,
+            "priority":           self.priority,
+            "draft_text":         self.draft_text,
+            "word_count":         self.word_count,
+            "query_variants":     self.query_variants,
+            "schema_types":       self.schema_types,
+            "authority_signals":  self.authority_signals,
+            "content_brief":      self.content_brief,
+            "model_used":         self.model_used,
+            "provider_used":      self.provider_used,
+            "generated_at":       self.generated_at,
+            "geo_score":          self.geo_score,
+            "aeo_score":          self.aeo_score,
+            "composite_score":    self.composite_score,
+            "quality_score":      self.quality_score,
+            "projected_position": self.projected_position,
+            "beats_paid_ads":     self.beats_paid_ads,
         }
 
 
@@ -521,17 +547,21 @@ Write the complete section now. Start with the heading."""
         self, draft: ContentDraft, cluster: dict
     ) -> ContentDraft:
         """
-        Score a draft through the GEO and AEO engines.
-        If the composite score is below _MIN_DRAFT_SCORE, regenerate once
-        with explicit improvement instructions injected into the prompt.
+        Score a draft through the GEO, AEO, and Quality Score engines.
+        The Quality Score gate mirrors Google's Ad Rank threshold:
+          - QS < 8 AND composite < _MIN_DRAFT_SCORE → regenerate with targeted fixes.
+          - Goal: every published draft achieves QS >= 8 (beats all paid ads).
 
         This is the quality gate that guarantees every published draft is
-        citation-ready for AI engines and positioned for featured snippets.
+        citation-ready for AI engines and positioned at #1 above paid ads.
         """
-        geo_score, aeo_score = await self._compute_draft_scores(draft.draft_text)
+        geo_score, aeo_score, quality_score = await self._compute_draft_scores(draft.draft_text)
         composite = (geo_score + aeo_score) / 2
 
-        if composite < _MIN_DRAFT_SCORE:
+        # Gate: regenerate if composite too low OR quality score below "beats paid ads" (8.0)
+        needs_improvement = composite < _MIN_DRAFT_SCORE or quality_score < 8.0
+
+        if needs_improvement:
             logger.info(
                 "draft_below_threshold_regenerating",
                 topic=draft.topic,
@@ -539,6 +569,7 @@ Write the complete section now. Start with the heading."""
                 geo_score=geo_score,
                 aeo_score=aeo_score,
                 composite=composite,
+                quality_score=quality_score,
                 threshold=_MIN_DRAFT_SCORE,
             )
             improved_text = await self._regenerate_with_fixes(
@@ -546,11 +577,12 @@ Write the complete section now. Start with the heading."""
                 cluster=cluster,
                 geo_score=geo_score,
                 aeo_score=aeo_score,
+                quality_score=quality_score,
             )
             if improved_text:
                 improved_text = self._validate_and_clean(improved_text, draft.intent)
                 # Re-score after improvement
-                geo_score, aeo_score = await self._compute_draft_scores(improved_text)
+                geo_score, aeo_score, quality_score = await self._compute_draft_scores(improved_text)
                 composite = (geo_score + aeo_score) / 2
                 draft.draft_text = improved_text
                 draft.word_count = len(improved_text.split())
@@ -558,16 +590,31 @@ Write the complete section now. Start with the heading."""
         draft.geo_score = round(geo_score, 1)
         draft.aeo_score = round(aeo_score, 1)
         draft.composite_score = round(composite, 1)
+        draft.quality_score = round(quality_score, 1)
+        draft.beats_paid_ads = quality_score >= 8.0
+        draft.projected_position = self._qs_to_label(quality_score)
         return draft
 
-    async def _compute_draft_scores(self, text: str) -> tuple[float, float]:
+    @staticmethod
+    def _qs_to_label(qs: float) -> str:
+        if qs >= 9.5: return "#1 AI Overview — above ALL paid ads"
+        if qs >= 8.5: return "#1 + Featured Snippet — above all paid ads"
+        if qs >= 8.0: return "#1–#2 — above most paid ads"
+        if qs >= 7.0: return "#2–#3 — competitive with top paid ads"
+        if qs >= 6.0: return "#4–#5 — level with paid ads"
+        if qs >= 4.0: return "#6–#9 — below paid ads"
+        return "Page 2+ — not competitive"
+
+    async def _compute_draft_scores(self, text: str) -> tuple[float, float, float]:
         """
-        Compute GEO visibility score and AEO answer readiness score for a text.
+        Compute GEO visibility score, AEO answer readiness score, and
+        Google Ads Quality Score equivalent for a text.
         Uses the local scoring modules directly (no HTTP round-trip needed).
-        Returns (geo_score 0-100, aeo_score 0-100).
+        Returns (geo_score 0-100, aeo_score 0-100, quality_score 1-10).
         """
         geo_score = 0.0
         aeo_score = 0.0
+        quality_score = 1.0
 
         # GEO score — LLM visibility
         try:
@@ -588,16 +635,43 @@ Write the complete section now. Start with the heading."""
         except Exception as exc:
             logger.debug("geo_score_failed", error=str(exc))
 
-        # AEO score — answer engine readiness
+        # AEO score — answer engine readiness (fix: use AnswerScorer not AEOScorer)
         try:
-            from services.aeo_engine.scorer import AEOScorer
-            aeo_scorer = AEOScorer()
+            from services.aeo_engine.answer_scorer import AnswerScorer
+            aeo_scorer = AnswerScorer()
             aeo_result = aeo_scorer.score(text)
-            aeo_score = aeo_result.overall_aeo_score
+            aeo_score = aeo_result.overall_score
         except Exception as exc:
             logger.debug("aeo_score_failed", error=str(exc))
 
-        return geo_score, aeo_score
+        # Quality Score — Google Ads Ad Rank equivalent (1-10)
+        try:
+            from services.gap_detection.quality_score import QualityScoreEngine
+            from services.geo_engine.citations import CitationReadinessAnalyser as _CRA
+            import re as _re
+            qs_engine = QualityScoreEngine()
+            cit = _CRA().analyse(text)
+            has_date = bool(_re.search(
+                r'\b(?:January|February|March|April|May|June|July|August|'
+                r'September|October|November|December|\d{4})\b', text
+            ))
+            has_stats = bool(_re.search(
+                r'\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:%|percent|million|billion|x|times)\b',
+                text, _re.IGNORECASE
+            ))
+            qs_result = qs_engine.score(
+                content=text,
+                citation_score=cit.overall_score,
+                aeo_score=aeo_score,
+                keyword_coverage_score=min(1.0, geo_score / 100),
+                has_stats=has_stats,
+                has_date=has_date,
+            )
+            quality_score = qs_result.quality_score
+        except Exception as exc:
+            logger.debug("quality_score_failed", error=str(exc))
+
+        return geo_score, aeo_score, quality_score
 
     async def _regenerate_with_fixes(
         self,
@@ -605,26 +679,49 @@ Write the complete section now. Start with the heading."""
         cluster: dict,
         geo_score: float,
         aeo_score: float,
+        quality_score: float = 0.0,
     ) -> str | None:
         """
-        Rebuild the prompt with specific fix instructions based on which
-        scores are low, then call the LLM again.
+        Rebuild the prompt with specific Quality Score fix instructions
+        targeting the exact QS dimensions that are below threshold,
+        then call the LLM again.
+
+        Quality Score mapping:
+          QS < 8.0 -> fixes target all 3 Ad Rank dimensions
+          QS < 6.0 -> aggressive rewrite with all dimensions
         """
         fixes: list[str] = []
 
-        if geo_score < _MIN_DRAFT_SCORE:
+        # QS Dimension 1: Snippet Attractiveness / Expected CTR fixes
+        if geo_score < _MIN_DRAFT_SCORE or quality_score < 8.0:
             fixes += [
-                "START with a direct factual sentence: '{Topic} is/provides {specific fact}.' — no preambles.",
-                "Include at least 2 named entities (organisations, products, people) with full context.",
-                "Add at least one statistic, percentage, or measurable claim.",
-                "Cite or reference at least one authoritative source or study.",
+                "[QS: Expected CTR] START with a direct factual sentence: "
+                "'{Topic} is/provides {specific fact}.' — ZERO preambles allowed. "
+                "This is the zero-click answer shown in AI Overviews ABOVE paid ads.",
+                "[QS: Expected CTR] Include a specific number or percentage in the FIRST paragraph "
+                "(e.g. 'reduces costs by 40%') — Google data shows this lifts CTR by 18%.",
             ]
-        if aeo_score < _MIN_DRAFT_SCORE:
+
+        # QS Dimension 2: Intent Alignment / Ad Relevance fixes
+        if aeo_score < _MIN_DRAFT_SCORE or quality_score < 8.0:
             fixes += [
-                "Structure the content so the first paragraph (40-60 words) directly answers the main question.",
-                "Add a numbered list or bullet list of at least 4 items if the intent is procedural or comparative.",
-                "Include a clear, concise 20-30 word summary at the start that works as a spoken voice answer.",
-                "Use specific trigger phrases like 'The best way to...', 'X works by...', 'The key difference is...'",
+                "[QS: Intent Alignment] Structure the first paragraph (40-60 words) as a DIRECT "
+                "standalone answer to the main query — this maximises Google's intent-match score.",
+                "[QS: Intent Alignment] Add a numbered list or bullet list of at least 4 items "
+                "if the intent is procedural or comparative — lists are Google's #1 featured snippet format.",
+                "[QS: Intent Alignment] Use specific trigger phrases: 'The best way to...', "
+                "'X works by...', 'The key difference is...', 'According to [Source]...'",
+            ]
+
+        # QS Dimension 3: Content Experience / Landing Page fixes
+        if quality_score < 8.0:
+            fixes += [
+                "[QS: Content Experience] Add at least 2 statistics, percentages, or measurable claims "
+                "— this is the primary E-E-A-T Trust signal Google uses vs paid ad landing pages.",
+                "[QS: Content Experience] Attribute at least one claim to a named source: "
+                "'According to [Organisation/Study]...' — required for E-E-A-T Experience score.",
+                "[QS: Content Experience] Add H2/H3 headings and bullet lists — Google's Page Experience "
+                "algorithm explicitly measures heading structure and scannability.",
             ]
 
         if not fixes:
@@ -632,12 +729,17 @@ Write the complete section now. Start with the heading."""
 
         fix_block = "\n".join(f"  {i+1}. {f}" for i, f in enumerate(fixes))
         improvement_instruction = f"""
-IMPORTANT — QUALITY IMPROVEMENT REQUIRED:
-The previous version scored too low on AI citation and answer readiness.
-You MUST fix ALL of the following in this rewrite:
+CRITICAL — QUALITY SCORE IMPROVEMENT REQUIRED TO OUT-RANK PAID ADS:
+Current Quality Score: {quality_score:.1f}/10 (need >= 8.0 to beat Google paid ads).
+Current GEO score: {geo_score:.0f}/100. Current AEO score: {aeo_score:.0f}/100.
+
+You MUST fix ALL of the following in this complete rewrite to achieve QS >= 8:
 {fix_block}
 
-Do NOT repeat the previous version. Rewrite completely with these fixes applied.
+TARGET: Every fix above maps to one of Google's 3 Ad Rank components. Nail all three
+and this content will rank at position #1 ABOVE all Google paid ads at zero cost.
+
+Do NOT repeat the previous version. Rewrite completely with every fix applied.
 """
         # Inject improvement instruction into a fresh prompt
         word_target = _INTENT_WORD_TARGETS.get(draft.intent, 200)
