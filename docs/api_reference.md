@@ -283,16 +283,18 @@ Content-Type: application/json
 
 ---
 
-## Gap Detection — Port 8008
+## Gap Detection + Quality Score — Port 8008
 
-### Analyse Gaps
+### Analyse Content Gaps
 ```http
-POST /gaps/analyse
+POST /api/v1/gaps/analyze
 Content-Type: application/json
 
 {
   "document_id": "uuid",
-  "reference_corpus_ids": ["uuid1", "uuid2"]
+  "tenant_id": "uuid",
+  "gap_threshold": 0.40,
+  "max_gaps": 20
 }
 ```
 
@@ -300,16 +302,131 @@ Response:
 ```json
 {
   "gap_score": 0.42,
-  "missing_topics": ["topic_a", "topic_b"],
+  "severity": "high",
+  "missing_topics": ["AI inventory management", "multi-channel sync"],
   "recommendations": ["Add content about X", "Expand section Y"],
-  "optimisation_priority": "high"
+  "before_coverage": 0.58,
+  "after_coverage": null
 }
 ```
 
-### Get Gap Report
+### Build Intent-Based Content Clusters
 ```http
-GET /gaps/report/{document_id}
+POST /api/v1/gaps/clusters
+Content-Type: application/json
+
+{
+  "document_id": "uuid",
+  "tenant_id": "uuid",
+  "missing_topics": ["AI inventory management"],
+  "document_content": "...",
+  "max_clusters_per_topic": 4
+}
 ```
+
+### Trigger Auto Gap-Closure Plan
+```http
+POST /api/v1/gaps/close/{document_id}?tenant_id=uuid
+```
+
+### Get Current Closure Plan
+```http
+GET /api/v1/gaps/close-actions/{document_id}?tenant_id=uuid
+```
+
+### Trigger LLM Writing Agent
+```http
+POST /api/v1/gaps/write/{document_id}?tenant_id=uuid
+```
+Dispatches the Gemini writing agent to generate content drafts for all open intent clusters. Each draft is scored by the GEO, AEO, and Quality Score engines. Drafts below QS 8 are automatically rewritten before saving.
+
+### Get Generated Content Drafts
+```http
+GET /api/v1/gaps/drafts/{document_id}?tenant_id=uuid&status=draft
+```
+
+Response includes per-draft scores:
+```json
+{
+  "drafts": [{
+    "topic": "AI inventory management",
+    "intent": "definitional",
+    "draft_text": "...",
+    "geo_score": 78.5,
+    "aeo_score": 71.2,
+    "composite_score": 74.8,
+    "quality_score": 8.3,
+    "beats_paid_ads": true,
+    "projected_position": "#1–#2 — above most paid ads"
+  }]
+}
+```
+
+### Gap Analysis History
+```http
+GET /api/v1/gaps/history/{document_id}?tenant_id=uuid
+```
+
+---
+
+### Google Ads Quality Score Engine
+```http
+POST /api/v1/gaps/quality-score
+Content-Type: application/json
+
+{
+  "content": "Inventory management software reduces stockouts by 40%...",
+  "title": "Best Inventory Management Software 2024",
+  "meta_description": "Discover how inventory software cuts costs by 40%...",
+  "query": "inventory management software",
+  "target_keywords": ["inventory management", "stock control"],
+  "monthly_search_volume": 22000
+}
+```
+
+Maps Google's Ad Rank formula to organic content — computes a Quality Score (1–10) and simulates position vs every paid ad.
+
+Response:
+```json
+{
+  "quality_score": 8.3,
+  "label": "Strong",
+  "beats_paid_ads": true,
+  "projected_position": "#1–#2 — above most paid ads",
+  "score_to_next_band": 0.7,
+  "dimensions": {
+    "snippet_attractiveness": { "score": 8.5, "status": "Above Average", "fixes": [] },
+    "keyword_alignment":      { "score": 8.0, "status": "Above Average", "fixes": [] },
+    "content_experience":     { "score": 8.3, "status": "Above Average", "fixes": [] }
+  },
+  "rank_simulation": {
+    "estimated_position": 2,
+    "paid_ads_beaten": 3,
+    "beats_all_paid_ads": false,
+    "ctr_multiplier": 2.0,
+    "traffic_multiplier": "2.0× more traffic at position #1 vs current position 2",
+    "ad_benchmarks": [
+      { "ad_position": "Ad #1 (top)", "ad_typical_qs": 8.5, "beats_this_ad": false, "qs_gap": 0.2 }
+    ],
+    "uplift_steps": [
+      { "to_qs": 9.0, "milestone": "Featured Snippet + Position 1", "ctr_gain": "+15.6% CTR" }
+    ]
+  },
+  "action_plan": [
+    "Increase QS 8.3 → 8.5 (+0.2 pts) to beat Ad #1 (top).",
+    "Reach QS 9.5 to enter Google AI Overviews — displays ABOVE all paid ads at zero cost."
+  ]
+}
+```
+
+| QS | Position | vs Paid Ads |
+|---|---|---|
+| 9.5–10 | AI Overview (#0) | Above ALL ads, zero cost |
+| 8.5–9.5 | #1 + Featured Snippet | Above all paid ads |
+| 8.0–8.5 | #1–#2 | Above most paid ads |
+| 7.0–8.0 | #2–#3 | Competitive with top ads |
+| 5.0–7.0 | #4–#6 | Level with or below ads |
+| < 5.0 | #7–Page 2 | Below all paid ads |
 
 ---
 
@@ -414,7 +531,7 @@ Content-Type: application/json
 
 {
   "content": "...",
-  "target_models": ["gpt-4", "gemini", "claude"]
+  "target_models": ["gemini", "google_ai_overviews", "perplexity", "chatgpt", "bing_copilot", "claude"]
 }
 ```
 

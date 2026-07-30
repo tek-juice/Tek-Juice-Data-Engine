@@ -89,8 +89,8 @@ SERVICES: dict[str, dict[str, str]] = {
     },
     "gap_detection": {
         "url":         "http://localhost:8008",
-        "label":       "Gap Detection",
-        "description": "Content gap analysis vs. trend signals",
+        "label":       "Gap Detection + Quality Score",
+        "description": "Content gap analysis, LLM writing agent, Google Ads Quality Score / Ad Rank engine",
         "color":       "#ef4444",
     },
     "schema_factory": {
