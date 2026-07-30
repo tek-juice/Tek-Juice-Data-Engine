@@ -137,28 +137,49 @@ class LLMSchemaFactory:
         content_excerpt: str,
         schema_type: str,
     ) -> dict | None:
-        """Call OpenAI to generate an enhanced JSON-LD schema."""
-        from openai import AsyncOpenAI
+        """Generate an enhanced JSON-LD schema using Gemini (primary) or OpenAI (fallback)."""
+        import re
 
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        if not settings.openai_api_key:
-            return None
-
-        prompt = f"""Generate a valid Schema.org JSON-LD schema of type '{schema_type}' 
+        prompt = f"""Generate a valid Schema.org JSON-LD schema of type '{schema_type}'
 for content that covers these topics: {', '.join(missing_topics[:5])}.
 Base it on this content excerpt: {content_excerpt[:500]}
 Return only valid JSON-LD, no explanation."""
 
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=800,
-        )
+        raw: str | None = None
 
-        raw = response.choices[0].message.content or ""
-        # Strip markdown code fences if present
-        import re
+        if settings.gemini_api_key:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=settings.gemini_api_key)
+                gen_model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+                response = await gen_model.generate_content_async(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        temperature=0.2,
+                        max_output_tokens=800,
+                    ),
+                )
+                raw = (response.text or "").strip()
+            except Exception as exc:
+                logger.warning("llm_factory_gemini_failed", error=str(exc))
+
+        if not raw and settings.openai_api_key:
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=settings.openai_api_key)
+                response = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=800,
+                )
+                raw = (response.choices[0].message.content or "").strip()
+            except Exception as exc:
+                logger.warning("llm_factory_openai_failed", error=str(exc))
+
+        if not raw:
+            return None
+
         raw = re.sub(r"```(?:json|jsonld)?\s*|\s*```", "", raw).strip()
         return json.loads(raw)
 

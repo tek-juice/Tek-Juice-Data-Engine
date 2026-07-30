@@ -182,9 +182,9 @@ class Settings(BaseSettings):
     # Falls back to openai automatically if the gemini key is absent.
     llm_writing_provider: str = "gemini"
     # Model name for the writing provider.
-    # Gemini:  gemini-1.5-pro | gemini-1.5-flash | gemini-2.0-flash
+    # Gemini:  gemini-2.5-flash | gemini-2.5-pro | gemini-2.0-flash
     # OpenAI:  gpt-4o | gpt-4o-mini | gpt-4-turbo
-    llm_writing_model: str = "gemini-1.5-pro"
+    llm_writing_model: str = "gemini-2.5-flash"
     # Maximum tokens the writing agent may generate per content section.
     llm_writing_max_tokens: int = 1200
 

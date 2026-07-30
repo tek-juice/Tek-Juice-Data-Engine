@@ -197,7 +197,7 @@ class LLMWritingAgent:
             if settings.gemini_api_key:
                 logger.warning("writing_agent_openai_key_missing_falling_back_to_gemini")
                 self._provider = "gemini"
-                self._model    = "gemini-1.5-pro"
+                self._model    = "gemini-2.5-flash"
         elif self._provider == "gemini" and not settings.gemini_api_key:
             if settings.openai_api_key:
                 logger.warning("writing_agent_gemini_key_missing_falling_back_to_openai")
@@ -464,7 +464,7 @@ Write the complete section now. Start with the heading."""
         """
         if self._provider == "openai":
             fallback_fn    = _call_gemini if settings.gemini_api_key else None
-            fallback_model = "gemini-1.5-pro" if settings.gemini_api_key else None
+            fallback_model = "gemini-2.5-flash" if settings.gemini_api_key else None
             return _call_openai, fallback_fn, fallback_model
         else:
             fallback_fn    = _call_openai if settings.openai_api_key else None
