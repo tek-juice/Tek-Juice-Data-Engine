@@ -68,9 +68,11 @@ _WIKIDATA_TYPE_FILTER: dict[str, str] = {
 
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
 WIKIDATA_ENTITY_URL = "https://www.wikidata.org/wiki/{qid}"
+WIKIPEDIA_API_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{slug}"
 WIKIDATA_SEARCH_LIMIT = 1           # first hit only — fastest lookup
-WIKIDATA_REQUEST_TIMEOUT = 4.0      # seconds; keep tight so it never blocks pipeline
+WIKIDATA_REQUEST_TIMEOUT = 5.0      # seconds; keep tight so it never blocks pipeline
 WIKIDATA_MAX_CONCURRENT = 5         # parallel lookups per batch
+_VERIFY_TIMEOUT = 3.0               # HEAD request timeout for URL verification
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -156,20 +158,59 @@ class WikidataLinker:
             if isinstance(result, str) and result:
                 resolved[text] = result
 
-        # Enrich entities in-place
+        # Enrich entities in-place with verified sameAs URLs
         for entity in entities:
             qid = resolved.get(entity.text)
             if qid:
                 entity.wikidata_id  = qid
                 entity.wikidata_url = WIKIDATA_ENTITY_URL.format(qid=qid)
-                entity.same_as = [
+                # Build candidate sameAs list then verify each URL actually exists
+                candidates = [
                     entity.wikidata_url,
                     f"https://en.wikipedia.org/wiki/{entity.text.replace(' ', '_')}",
                 ]
                 if entity.schema_org_type:
-                    entity.same_as.append(entity.schema_org_type)
+                    candidates.append(entity.schema_org_type)
+                entity.same_as = await self._verify_same_as_urls(candidates)
 
         return entities
+
+    async def _verify_same_as_urls(self, urls: list[str]) -> list[str]:
+        """
+        Verify each sameAs URL returns a 200 response before emitting it.
+        A 404 sameAs link actively hurts citation scoring with Google AI Overviews.
+        Wikidata URLs are always trusted (they redirect, never 404 for QIDs).
+        Wikipedia URLs are verified via the REST summary API (fast, no HTML fetch).
+        """
+        verified: list[str] = []
+        async with httpx.AsyncClient(timeout=_VERIFY_TIMEOUT,
+                                     follow_redirects=True) as client:
+            for url in urls:
+                try:
+                    if "wikidata.org/wiki/Q" in url:
+                        # Wikidata QID URLs are always valid — skip HEAD check
+                        verified.append(url)
+                        continue
+                    if "en.wikipedia.org/wiki/" in url:
+                        # Use Wikipedia REST summary API for fast existence check
+                        slug = url.split("/wiki/")[-1]
+                        check_url = WIKIPEDIA_API_URL.format(slug=slug)
+                        resp = await client.get(check_url)
+                        if resp.status_code == 200:
+                            verified.append(url)
+                        else:
+                            logger.debug(
+                                "same_as_wikipedia_not_found",
+                                url=url, status=resp.status_code
+                            )
+                    else:
+                        # Generic HEAD check for other URLs
+                        resp = await client.head(url)
+                        if resp.status_code < 400:
+                            verified.append(url)
+                except Exception as exc:
+                    logger.debug("same_as_verify_failed", url=url, error=str(exc))
+        return verified
 
     async def _lookup(
         self,

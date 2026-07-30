@@ -115,6 +115,9 @@ class SchemaBundle:
     script_tag: str                     # ready-to-embed HTML <script> tag
     zero_click_score: float = 0.0       # 0-1 score of zero-click impression quality
     zero_click_sentence: str = ""       # optimised zero-click first sentence
+    eeeat_score: float = 0.0            # E-E-A-T composite score (0-1)
+    speakable_script_tag: str = ""      # SpeakableSpecification JSON-LD for voice
+    breadcrumb_script_tag: str = ""     # BreadcrumbList JSON-LD
 
 
 class SchemaBuilder:
@@ -229,7 +232,22 @@ class SchemaBuilder:
             first_sentence=first_sentence,
         )
 
-        # 10. Persist to database
+        # 10. E-E-A-T signals (Experience, Expertise, Authoritativeness, Trustworthiness)
+        eeeat_score = self._score_eeeat(content=content, jsonld=jsonld, metadata=metadata)
+        # Inject E-E-A-T fields into JSON-LD
+        self._inject_eeeat(jsonld, metadata, eeeat_score)
+
+        # 11. SpeakableSpecification for Google voice search + Google Discover
+        speakable_jsonld = self._build_speakable(
+            url=metadata.get("url", ""),
+            first_sentence=first_sentence,
+            zero_click_sentence=zero_click_sentence,
+        )
+
+        # 12. BreadcrumbList for navigation signals
+        breadcrumb_jsonld = self._build_breadcrumb(metadata)
+
+        # 13. Persist to database
         bundle = SchemaBundle(
             document_id=document_id,
             tenant_id=tenant_id,
@@ -246,6 +264,9 @@ class SchemaBuilder:
             script_tag=self._jsonld.to_script_tag(jsonld),
             zero_click_score=zero_click_score,
             zero_click_sentence=zero_click_sentence,
+            eeeat_score=eeeat_score,
+            speakable_script_tag=self._jsonld.to_script_tag(speakable_jsonld) if speakable_jsonld else "",
+            breadcrumb_script_tag=self._jsonld.to_script_tag(breadcrumb_jsonld) if breadcrumb_jsonld else "",
         )
 
         await self._persist(bundle)
@@ -821,6 +842,205 @@ class SchemaBuilder:
         }
 
     # ─────────────────────────────────────────────
+    # E-E-A-T signals
+    # ─────────────────────────────────────────────
+
+    @staticmethod
+    def _score_eeeat(content: str, jsonld: dict, metadata: dict) -> float:
+        """
+        Score E-E-A-T (Experience, Expertise, Authoritativeness, Trustworthiness).
+        Google's Quality Rater Guidelines weight these signals heavily for AI Overviews.
+
+        Scoring (0.0–1.0):
+          Experience:       author bio present, first-person signals       (+0.15)
+          Expertise:        credentials, certifications, publication venue (+0.20)
+          Authoritativeness: sameAs links, backlink signals, org schema    (+0.25)
+          Trustworthiness:  date signals, source citations, HTTPS, review (+0.25)
+          Completeness:     word count ≥ 600, statistics present           (+0.15)
+        """
+        score = 0.0
+        lower = content.lower()
+
+        # Experience — author bio / first-person signals
+        has_author = bool(metadata.get("author") or jsonld.get("author"))
+        has_byline = bool(re.search(r'\b(?:written by|author:|by [A-Z])\b', content, re.IGNORECASE))
+        if has_author or has_byline:
+            score += 0.15
+
+        # Expertise — credentials or known publication venue
+        expertise_signals = re.findall(
+            r'\b(?:PhD|MD|MBA|professor|researcher|certified|expert|according to|published in|study|research|report)\b',
+            content, re.IGNORECASE
+        )
+        score += min(0.20, len(expertise_signals) * 0.04)
+
+        # Authoritativeness — sameAs present + schema type trust
+        has_same_as = bool(jsonld.get("sameAs") or jsonld.get("about"))
+        if has_same_as:
+            score += 0.15
+        if metadata.get("domain_authority") and float(metadata["domain_authority"]) > 30:
+            score += 0.10
+
+        # Trustworthiness — date, sources, citations
+        has_date = bool(
+            jsonld.get("datePublished") or jsonld.get("dateModified") or
+            re.search(r'\b(20\d{2})\b', content)
+        )
+        if has_date:
+            score += 0.10
+        source_signals = re.findall(
+            r'\b(?:source:|via|according to|cited from|references?:|study by|data from)\b',
+            content, re.IGNORECASE
+        )
+        score += min(0.15, len(source_signals) * 0.05)
+
+        # Completeness
+        word_count = len(content.split())
+        if word_count >= 600:
+            score += 0.08
+        has_stats = bool(re.search(r'\b\d+(?:\.\d+)?(?:%|x|times|k|m|b|million|billion)\b', content, re.IGNORECASE))
+        if has_stats:
+            score += 0.07
+
+        return round(min(1.0, score), 3)
+
+    @staticmethod
+    def _inject_eeeat(jsonld: dict, metadata: dict, eeeat_score: float) -> None:
+        """
+        Inject E-E-A-T signals directly into the JSON-LD object in-place.
+        Adds author credentials, publication/update dates, and review signals.
+        """
+        now_date = datetime.now(UTC).strftime("%Y-%m-%d")
+
+        # Ensure datePublished and dateModified are always present
+        if not jsonld.get("datePublished"):
+            jsonld["datePublished"] = metadata.get("date_published", now_date)
+        if not jsonld.get("dateModified"):
+            jsonld["dateModified"] = now_date
+
+        # Author with credentials
+        if not jsonld.get("author") and metadata.get("author"):
+            jsonld["author"] = {
+                "@type": "Person",
+                "name":  metadata["author"],
+                "url":   metadata.get("author_url", ""),
+            }
+        if metadata.get("author_credentials"):
+            if isinstance(jsonld.get("author"), dict):
+                jsonld["author"]["description"] = metadata["author_credentials"]
+
+        # Publisher with logo
+        if not jsonld.get("publisher"):
+            jsonld["publisher"] = {
+                "@type": "Organization",
+                "name":  metadata.get("publisher", settings.app_name),
+                "url":   metadata.get("publisher_url", ""),
+                "logo":  {"@type": "ImageObject", "url": metadata.get("logo_url", "")},
+            }
+
+        # Review/rating signals (social proof for Trustworthiness)
+        if metadata.get("review_count") and metadata.get("review_rating"):
+            jsonld["aggregateRating"] = {
+                "@type":       "AggregateRating",
+                "ratingValue": str(metadata["review_rating"]),
+                "reviewCount": str(metadata["review_count"]),
+                "bestRating":  "5",
+            }
+
+        # Cite as / isPartOf for authority signals
+        if metadata.get("url"):
+            jsonld["mainEntityOfPage"] = {
+                "@type": "WebPage",
+                "@id":   metadata["url"],
+            }
+
+    # ─────────────────────────────────────────────
+    # Voice search: SpeakableSpecification
+    # ─────────────────────────────────────────────
+
+    @staticmethod
+    def _build_speakable(
+        url: str,
+        first_sentence: str,
+        zero_click_sentence: str,
+    ) -> dict | None:
+        """
+        Build a SpeakableSpecification JSON-LD block.
+        Google uses this to select content for voice search and Google Discover.
+        The speakable section must contain the most important sentence(s) that
+        directly answer a likely voice query about the content.
+        """
+        if not url and not first_sentence:
+            return None
+
+        speakable_text = zero_click_sentence or first_sentence
+        if len(speakable_text) < 20:
+            return None
+
+        return {
+            "@context": "https://schema.org",
+            "@type":    "WebPage",
+            "url":      url,
+            "speakable": {
+                "@type":     "SpeakableSpecification",
+                "cssSelector": ["h1", ".speakable", "article > p:first-of-type"],
+                "xpath": [
+                    "/html/head/title",
+                    "/html/head/meta[@name='description']/@content",
+                ],
+            },
+            "name":        speakable_text[:100],
+            "description": speakable_text[:300],
+        }
+
+    # ─────────────────────────────────────────────
+    # Navigation: BreadcrumbList
+    # ─────────────────────────────────────────────
+
+    @staticmethod
+    def _build_breadcrumb(metadata: dict) -> dict | None:
+        """
+        Build a BreadcrumbList JSON-LD block from metadata breadcrumbs.
+        Breadcrumbs are a strong signal for Google to understand page hierarchy
+        and are displayed in SERP snippets — direct click-through rate booster.
+
+        metadata keys:
+          breadcrumbs: list of {"name": "...", "url": "..."} dicts, ordered root→leaf
+          url: page URL used as final crumb if breadcrumbs not provided
+        """
+        breadcrumbs = metadata.get("breadcrumbs", [])
+
+        # Auto-generate from URL if not provided
+        if not breadcrumbs and metadata.get("url"):
+            url = metadata["url"]
+            parts = url.rstrip("/").split("/")
+            breadcrumbs = []
+            for i, part in enumerate(parts):
+                if part.startswith("http"):
+                    breadcrumbs.append({"name": "Home", "url": "/".join(parts[:3]) + "/"})
+                elif part:
+                    crumb_url = "/".join(parts[:i + 1]) + "/"
+                    name = part.replace("-", " ").replace("_", " ").title()
+                    breadcrumbs.append({"name": name, "url": crumb_url})
+
+        if not breadcrumbs:
+            return None
+
+        return {
+            "@context": "https://schema.org",
+            "@type":    "BreadcrumbList",
+            "itemListElement": [
+                {
+                    "@type":    "ListItem",
+                    "position": i + 1,
+                    "name":     crumb.get("name", ""),
+                    "item":     crumb.get("url", ""),
+                }
+                for i, crumb in enumerate(breadcrumbs[:8])
+            ],
+        }
+
+    # ─────────────────────────────────────────────
     # Citation readiness scoring
     # ─────────────────────────────────────────────
 
@@ -950,15 +1170,18 @@ class SchemaBuilder:
                         "schema_type": bundle.schema_type,
                         "content":     json.dumps(bundle.jsonld),
                         "metadata": json.dumps({
-                                    "first_sentence":       bundle.first_sentence,
-                                    "zero_click_sentence":  bundle.zero_click_sentence,
-                                    "zero_click_score":     bundle.zero_click_score,
-                                    "same_as_urls":         bundle.same_as_urls,
-                                    "citation_score":       bundle.citation_score,
-                                    "geo_entities":         bundle.geo_entities,
-                                    "open_graph":           bundle.open_graph,
-                                    "twitter_card":         bundle.twitter_card,
-                                }),
+                                            "first_sentence":       bundle.first_sentence,
+                                            "zero_click_sentence":  bundle.zero_click_sentence,
+                                            "zero_click_score":     bundle.zero_click_score,
+                                            "same_as_urls":         bundle.same_as_urls,
+                                            "citation_score":       bundle.citation_score,
+                                            "eeeat_score":          bundle.eeeat_score,
+                                            "geo_entities":         bundle.geo_entities,
+                                            "open_graph":           bundle.open_graph,
+                                            "twitter_card":         bundle.twitter_card,
+                                            "speakable":            bool(bundle.speakable_script_tag),
+                                            "breadcrumb":           bool(bundle.breadcrumb_script_tag),
+                                        }),
                     },
                 )
                 await session.commit()

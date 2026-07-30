@@ -82,6 +82,12 @@ _INTENT_WORD_TARGETS: dict[str, int] = {
 
 # ── Data classes ──────────────────────────────────────────────────────────────
 
+# Minimum composite GEO+AEO score (0-100) a draft must reach before being
+# accepted.  Drafts below this threshold are regenerated once with explicit
+# improvement instructions injected into the prompt.
+_MIN_DRAFT_SCORE = 65
+
+
 @dataclass
 class ContentDraft:
     """A single LLM-generated content section for one intent cluster."""
@@ -99,6 +105,9 @@ class ContentDraft:
     model_used: str
     provider_used: str
     generated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    geo_score: float = 0.0      # LLM visibility score (0-100) from GEO engine
+    aeo_score: float = 0.0      # Answer engine score (0-100) from AEO engine
+    composite_score: float = 0.0  # (geo_score + aeo_score) / 2
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +125,9 @@ class ContentDraft:
             "model_used":       self.model_used,
             "provider_used":    self.provider_used,
             "generated_at":     self.generated_at,
+            "geo_score":        self.geo_score,
+            "aeo_score":        self.aeo_score,
+            "composite_score":  self.composite_score,
         }
 
 
@@ -234,6 +246,8 @@ class LLMWritingAgent:
         for cluster in clusters:
             try:
                 draft = await self._write_cluster(document_id, tenant_id, cluster)
+                # Score the draft through GEO + AEO engines
+                draft = await self._score_and_improve(draft, cluster)
                 drafts.append(draft)
                 logger.info(
                     "cluster_draft_written",
@@ -241,6 +255,9 @@ class LLMWritingAgent:
                     topic=cluster.get("topic"),
                     intent=cluster.get("intent"),
                     words=draft.word_count,
+                    geo_score=draft.geo_score,
+                    aeo_score=draft.aeo_score,
+                    composite_score=draft.composite_score,
                 )
             except Exception as exc:
                 failed += 1
@@ -497,3 +514,148 @@ Write the complete section now. Start with the heading."""
         text = re.sub(r"\n{3,}", "\n\n", text)
 
         return text.strip()
+
+    # ── GEO + AEO scoring feedback loop ──────────────────────────────────────
+
+    async def _score_and_improve(
+        self, draft: ContentDraft, cluster: dict
+    ) -> ContentDraft:
+        """
+        Score a draft through the GEO and AEO engines.
+        If the composite score is below _MIN_DRAFT_SCORE, regenerate once
+        with explicit improvement instructions injected into the prompt.
+
+        This is the quality gate that guarantees every published draft is
+        citation-ready for AI engines and positioned for featured snippets.
+        """
+        geo_score, aeo_score = await self._compute_draft_scores(draft.draft_text)
+        composite = (geo_score + aeo_score) / 2
+
+        if composite < _MIN_DRAFT_SCORE:
+            logger.info(
+                "draft_below_threshold_regenerating",
+                topic=draft.topic,
+                intent=draft.intent,
+                geo_score=geo_score,
+                aeo_score=aeo_score,
+                composite=composite,
+                threshold=_MIN_DRAFT_SCORE,
+            )
+            improved_text = await self._regenerate_with_fixes(
+                draft=draft,
+                cluster=cluster,
+                geo_score=geo_score,
+                aeo_score=aeo_score,
+            )
+            if improved_text:
+                improved_text = self._validate_and_clean(improved_text, draft.intent)
+                # Re-score after improvement
+                geo_score, aeo_score = await self._compute_draft_scores(improved_text)
+                composite = (geo_score + aeo_score) / 2
+                draft.draft_text = improved_text
+                draft.word_count = len(improved_text.split())
+
+        draft.geo_score = round(geo_score, 1)
+        draft.aeo_score = round(aeo_score, 1)
+        draft.composite_score = round(composite, 1)
+        return draft
+
+    async def _compute_draft_scores(self, text: str) -> tuple[float, float]:
+        """
+        Compute GEO visibility score and AEO answer readiness score for a text.
+        Uses the local scoring modules directly (no HTTP round-trip needed).
+        Returns (geo_score 0-100, aeo_score 0-100).
+        """
+        geo_score = 0.0
+        aeo_score = 0.0
+
+        # GEO score — LLM visibility
+        try:
+            from services.geo_engine.llm_visibility import LLMVisibilityScorer
+            from services.geo_engine.citations import CitationReadinessAnalyser
+            scorer = LLMVisibilityScorer()
+            citations = CitationReadinessAnalyser()
+            citation_result = citations.analyse(text)
+            word_count = len(text.split())
+            entity_count = max(1, word_count // 80)  # rough estimate without NER
+            vis = scorer.score(
+                content=text,
+                entity_count=entity_count,
+                citation_score=citation_result.overall_score,
+                context_richness=0.0,
+            )
+            geo_score = vis.overall_score
+        except Exception as exc:
+            logger.debug("geo_score_failed", error=str(exc))
+
+        # AEO score — answer engine readiness
+        try:
+            from services.aeo_engine.scorer import AEOScorer
+            aeo_scorer = AEOScorer()
+            aeo_result = aeo_scorer.score(text)
+            aeo_score = aeo_result.overall_aeo_score
+        except Exception as exc:
+            logger.debug("aeo_score_failed", error=str(exc))
+
+        return geo_score, aeo_score
+
+    async def _regenerate_with_fixes(
+        self,
+        draft: ContentDraft,
+        cluster: dict,
+        geo_score: float,
+        aeo_score: float,
+    ) -> str | None:
+        """
+        Rebuild the prompt with specific fix instructions based on which
+        scores are low, then call the LLM again.
+        """
+        fixes: list[str] = []
+
+        if geo_score < _MIN_DRAFT_SCORE:
+            fixes += [
+                "START with a direct factual sentence: '{Topic} is/provides {specific fact}.' — no preambles.",
+                "Include at least 2 named entities (organisations, products, people) with full context.",
+                "Add at least one statistic, percentage, or measurable claim.",
+                "Cite or reference at least one authoritative source or study.",
+            ]
+        if aeo_score < _MIN_DRAFT_SCORE:
+            fixes += [
+                "Structure the content so the first paragraph (40-60 words) directly answers the main question.",
+                "Add a numbered list or bullet list of at least 4 items if the intent is procedural or comparative.",
+                "Include a clear, concise 20-30 word summary at the start that works as a spoken voice answer.",
+                "Use specific trigger phrases like 'The best way to...', 'X works by...', 'The key difference is...'",
+            ]
+
+        if not fixes:
+            return None
+
+        fix_block = "\n".join(f"  {i+1}. {f}" for i, f in enumerate(fixes))
+        improvement_instruction = f"""
+IMPORTANT — QUALITY IMPROVEMENT REQUIRED:
+The previous version scored too low on AI citation and answer readiness.
+You MUST fix ALL of the following in this rewrite:
+{fix_block}
+
+Do NOT repeat the previous version. Rewrite completely with these fixes applied.
+"""
+        # Inject improvement instruction into a fresh prompt
+        word_target = _INTENT_WORD_TARGETS.get(draft.intent, 200)
+        base_prompt = self._build_prompt(
+            topic=draft.topic,
+            intent=draft.intent,
+            query_variants=draft.query_variants,
+            authority_signals=draft.authority_signals,
+            content_brief=draft.content_brief,
+            schema_types=draft.schema_types,
+            word_target=word_target,
+        )
+        improved_prompt = base_prompt + improvement_instruction
+
+        try:
+            return await self._call_llm(improved_prompt)
+        except Exception as exc:
+            logger.warning("draft_regeneration_failed", error=str(exc))
+            return None
+
+
