@@ -58,7 +58,7 @@ async def _proxy(service: str, path: str, request: Request, current_user: Curren
     if not base_url:
         raise ServiceUnavailableError(f"Unknown service: '{service}'")
 
-    target_url = f"{base_url}/api/v1/{path}"
+    target_url = f"{base_url}/api/v1/{service}/{path}"
     if request.url.query:
         target_url += f"?{request.url.query}"
 

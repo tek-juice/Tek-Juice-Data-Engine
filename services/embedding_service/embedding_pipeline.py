@@ -33,7 +33,11 @@ def get_vector_column(provider: str, model: str) -> str:
     """
     Return the correct vector namespace column for a given provider/model.
     Raises ValueError if the model is not registered in EMBEDDING_MODELS.
+    Strips the "models/" prefix that the Gemini API requires but our registry
+    does not use, so both "text-embedding-004" and "models/text-embedding-004"
+    resolve correctly.
     """
+    model = model.removeprefix("models/")
     provider_models = EMBEDDING_MODELS.get(provider, {})
     dims = provider_models.get(model)
     if dims is None:
