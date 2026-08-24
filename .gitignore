@@ -1,0 +1,19 @@
+.env
+.env.local
+.env.*
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+storage/
+*.log
+
+# PgBouncer — contains hashed credentials, never commit
+infrastructure/pgbouncer/userlist.txt
+infrastructure/docker/pgbouncer_userlist.txt

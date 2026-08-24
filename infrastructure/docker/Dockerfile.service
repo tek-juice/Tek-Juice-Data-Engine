@@ -1,0 +1,35 @@
+# DATA ENGINE — Generic Service Dockerfile
+# Inherits the heavy ML/system-dep base layer. Only adds:
+#   • thin runtime packages (~30 pkgs, ~10 s)
+#   • all service source files (1.9 MB total — negligible)
+# Usage: docker build --build-arg SERVICE=ingestion_service .
+ARG SERVICE=ingestion_service
+
+FROM data_engine-base
+
+ARG SERVICE
+ENV SERVICE=${SERVICE}
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY configs/ ./configs/
+COPY shared/ ./shared/
+# Copy all services so cross-service imports (e.g. gap_detection → semantic_engine)
+# resolve correctly. Total source size is ~2 MB — negligible vs the base image.
+COPY services/ ./services/
+
+RUN mkdir -p storage/uploads storage/processed storage/vectors storage/exports storage/logs
+
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && chown -R appuser:appgroup /app/storage
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:${SERVICE_PORT:-8001}/health || exit 1
+
+CMD uvicorn services.${SERVICE}.main:app \
+    --host 0.0.0.0 \
+    --port ${SERVICE_PORT:-8001} \
+    --workers 2 \
+    --loop uvloop

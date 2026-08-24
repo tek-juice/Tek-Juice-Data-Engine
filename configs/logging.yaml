@@ -1,0 +1,127 @@
+# DATA ENGINE — Logging Configuration
+# Uses structlog for structured JSON logging in production
+# and colourised console output in development.
+
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  json:
+    format: "%(message)s"
+    class: pythonjsonlogger.jsonlogger.JsonFormatter
+    datefmt: "%Y-%m-%dT%H:%M:%S"
+
+  console:
+    format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+
+  structlog_console:
+    "()": structlog.stdlib.ProcessorFormatter
+    processors:
+      - structlog.stdlib.ProcessorFormatter.wrap_for_formatter
+    foreign_pre_chain:
+      - structlog.contextvars.merge_contextvars
+      - structlog.stdlib.add_log_level
+      - structlog.stdlib.add_logger_name
+      - structlog.processors.TimeStamper(fmt="iso")
+      - structlog.dev.ConsoleRenderer
+
+  structlog_json:
+    "()": structlog.stdlib.ProcessorFormatter
+    processors:
+      - structlog.stdlib.ProcessorFormatter.wrap_for_formatter
+    foreign_pre_chain:
+      - structlog.contextvars.merge_contextvars
+      - structlog.stdlib.add_log_level
+      - structlog.stdlib.add_logger_name
+      - structlog.processors.TimeStamper(fmt="iso")
+      - structlog.processors.JSONRenderer
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: DEBUG
+    formatter: structlog_console
+    stream: ext://sys.stdout
+
+  file_json:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    formatter: structlog_json
+    filename: storage/logs/app.log
+    maxBytes: 52428800   # 50 MB
+    backupCount: 10
+    encoding: utf-8
+
+  error_file:
+    class: logging.handlers.RotatingFileHandler
+    level: ERROR
+    formatter: structlog_json
+    filename: storage/logs/errors.log
+    maxBytes: 10485760   # 10 MB
+    backupCount: 5
+    encoding: utf-8
+
+  access_file:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    formatter: structlog_json
+    filename: storage/logs/access.log
+    maxBytes: 52428800   # 50 MB
+    backupCount: 10
+    encoding: utf-8
+
+loggers:
+  data_engine:
+    level: INFO
+    handlers: [console, file_json, error_file]
+    propagate: false
+
+  data_engine.access:
+    level: INFO
+    handlers: [console, access_file]
+    propagate: false
+
+  uvicorn:
+    level: INFO
+    handlers: [console]
+    propagate: false
+
+  uvicorn.error:
+    level: ERROR
+    handlers: [console, error_file]
+    propagate: false
+
+  uvicorn.access:
+    level: INFO
+    handlers: [access_file]
+    propagate: false
+
+  sqlalchemy.engine:
+    level: WARNING
+    handlers: [console]
+    propagate: false
+
+  celery:
+    level: INFO
+    handlers: [console, file_json]
+    propagate: false
+
+  celery.task:
+    level: INFO
+    handlers: [console, file_json]
+    propagate: false
+
+  httpx:
+    level: WARNING
+    handlers: [console]
+    propagate: false
+
+  openai:
+    level: WARNING
+    handlers: [console]
+    propagate: false
+
+root:
+  level: WARNING
+  handlers: [console, file_json]

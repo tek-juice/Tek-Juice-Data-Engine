@@ -1,0 +1,534 @@
+# ─────────────────────────────────────────────
+# DATA ENGINE — Docker Compose
+# Local development stack
+# ─────────────────────────────────────────────
+# NOTE: .env uses localhost hostnames (for python run.py local dev).
+# The x-docker-env anchor below overrides those hostnames to the correct
+# Docker service names for all containers.
+# ─────────────────────────────────────────────
+
+# ── Shared environment override for all app services ──────────────────────────
+# Overrides the localhost hostnames in .env with Docker-network service names.
+x-docker-env: &docker-env
+  PGBOUNCER_HOST: pgbouncer
+  PGBOUNCER_PORT: 6432
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  # CORS: allow the frontend origin in all environments.
+  # Add further origins as comma-separated values if needed.
+  GATEWAY_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:8000,http://localhost:6145,http://localhost:6146"
+  # Google OAuth 2.0 — register <backend_url>/auth/oauth/google/callback in Google Cloud Console.
+  GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+  GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+  # Service-to-service routing: api_gateway proxy/health use these to reach
+  # each downstream service by its Docker Compose service name, not localhost.
+  SERVICE_HOST_INGESTION_SERVICE: ingestion_service
+  SERVICE_HOST_EMBEDDING_SERVICE: embedding_service
+  SERVICE_HOST_VECTOR_VAULT: vector_vault
+  SERVICE_HOST_TELEMETRY_SERVICE: telemetry_service
+  SERVICE_HOST_TREND_SCRAPER: trend_scraper
+  SERVICE_HOST_SEMANTIC_ENGINE: semantic_engine
+  SERVICE_HOST_GAP_DETECTION: gap_detection
+  SERVICE_HOST_SCHEMA_FACTORY: schema_factory
+  SERVICE_HOST_DASHBOARD_BACKEND: dashboard_backend
+  SERVICE_HOST_SEO_ENGINE: seo_engine
+  SERVICE_HOST_GEO_ENGINE: geo_engine
+  SERVICE_HOST_AEO_ENGINE: aeo_engine
+
+networks:
+  data_engine_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  storage_uploads:
+  storage_vectors:
+
+services:
+
+  # ── Shared Base Image ─────────────────────
+  # Build this ONCE before any other service image:
+  #   docker compose build base
+  # All service/worker/gateway images inherit from data_engine-base.
+  # Only rebuild when requirements-base.txt changes (rare).
+  base:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.base
+    image: data_engine-base
+
+  # ── PostgreSQL + PGVector ──────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: data_engine_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-data_engine}
+      POSTGRES_USER: ${POSTGRES_USER:-data_engine_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-TekJuice@2026!}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schemas:/docker-entrypoint-initdb.d
+    networks:
+      - data_engine_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-data_engine_user} -d ${POSTGRES_DB:-data_engine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PgBouncer ─────────────────────────────
+  pgbouncer:
+    build:
+      context: ./infrastructure/docker
+      dockerfile: Dockerfile.pgbouncer
+    container_name: data_engine_pgbouncer
+    restart: unless-stopped
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ── Redis ─────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: data_engine_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - data_engine_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── API Gateway ───────────────────────────
+  api_gateway:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.gateway
+    container_name: data_engine_gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Ingestion Service ─────────────────────
+  ingestion_service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: ingestion_service
+    container_name: data_engine_ingestion
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+    ports:
+      - "8001:8001"
+    volumes:
+      - storage_uploads:/app/storage/uploads
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Chunking Service ──────────────────────
+  chunking_service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: chunking_service
+    container_name: data_engine_chunking
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8002
+    ports:
+      - "8002:8002"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Embedding Service ─────────────────────
+  embedding_service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: embedding_service
+    container_name: data_engine_embedding
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Vector Vault ──────────────────────────
+  vector_vault:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: vector_vault
+    container_name: data_engine_vector_vault
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8004
+    ports:
+      - "8004:8004"
+    volumes:
+      - storage_vectors:/app/storage/vectors
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Telemetry Service ─────────────────────
+  telemetry_service:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: telemetry_service
+    container_name: data_engine_telemetry
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8005
+    ports:
+      - "8005:8005"
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Trend Scraper ─────────────────────────
+  trend_scraper:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: trend_scraper
+    container_name: data_engine_trends
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8006
+    ports:
+      - "8006:8006"
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Semantic Engine ───────────────────────
+  semantic_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: semantic_engine
+    container_name: data_engine_semantic
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8007
+    ports:
+      - "8007:8007"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Gap Detection ─────────────────────────
+  gap_detection:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: gap_detection
+    container_name: data_engine_gap
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8008
+    ports:
+      - "8008:8008"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Schema Factory ────────────────────────
+  schema_factory:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: schema_factory
+    container_name: data_engine_schema
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8009
+    ports:
+      - "8009:8009"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Synchronization Service ───────────────
+  synchronization:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: synchronization
+    container_name: data_engine_sync
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8010
+    ports:
+      - "8010:8010"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Dashboard Backend ─────────────────────
+  dashboard_backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: dashboard_backend
+    container_name: data_engine_dashboard
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8011
+    ports:
+      - "8011:8011"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── SEO Engine ───────────────────────────
+  seo_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: seo_engine
+    container_name: data_engine_seo
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8012
+    ports:
+      - "8012:8012"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── GEO Engine ───────────────────────────
+  geo_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: geo_engine
+    container_name: data_engine_geo
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8013
+    ports:
+      - "8013:8013"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── AEO Engine ───────────────────────────
+  aeo_engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.service
+      args:
+        SERVICE: aeo_engine
+    container_name: data_engine_aeo
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+      SERVICE_PORT: 8014
+    ports:
+      - "8014:8014"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Celery Worker ─────────────────────────
+  celery_worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    container_name: data_engine_celery
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+    command: celery -A workers.celery.app worker --loglevel=info --concurrency=4
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Celery Beat ───────────────────────────
+  celery_beat:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    container_name: data_engine_celery_beat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *docker-env
+    # --schedule points to a tmpfs path the non-root appuser can write to.
+    command: celery -A workers.celery.app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - data_engine_net
+
+  # ── Nginx ─────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: data_engine_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - api_gateway
+    networks:
+      - data_engine_net
+
+  # ── Prometheus ────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: data_engine_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - data_engine_net
+
+  # ── Grafana ───────────────────────────────
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: data_engine_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - data_engine_net

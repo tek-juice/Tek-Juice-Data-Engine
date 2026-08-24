@@ -1,0 +1,144 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+  external_labels:
+    environment: "production"
+    project:     "data_engine"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+
+  # ── API Gateway ──────────────────────────────
+  - job_name: "api_gateway"
+    static_configs:
+      - targets: ["api_gateway:8000"]
+    metrics_path: /metrics/
+    scrape_interval: 15s
+
+  # ── Ingestion Service ─────────────────────────
+  - job_name: "ingestion_service"
+    static_configs:
+      - targets: ["ingestion_service:8001"]
+    metrics_path: /metrics/
+
+  # ── Chunking Service ──────────────────────────
+  - job_name: "chunking_service"
+    static_configs:
+      - targets: ["chunking_service:8002"]
+    metrics_path: /metrics/
+
+  # ── Embedding Service ─────────────────────────
+  - job_name: "embedding_service"
+    static_configs:
+      - targets: ["embedding_service:8003"]
+    metrics_path: /metrics/
+
+  # ── Vector Vault ──────────────────────────────
+  - job_name: "vector_vault"
+    static_configs:
+      - targets: ["vector_vault:8004"]
+    metrics_path: /metrics/
+
+  # ── Telemetry Service ─────────────────────────
+  - job_name: "telemetry_service"
+    static_configs:
+      - targets: ["telemetry_service:8005"]
+    metrics_path: /metrics/
+
+  # ── Trend Scraper ─────────────────────────────
+  - job_name: "trend_scraper"
+    static_configs:
+      - targets: ["trend_scraper:8006"]
+    metrics_path: /metrics/
+
+  # ── Semantic Engine ───────────────────────────
+  - job_name: "semantic_engine"
+    static_configs:
+      - targets: ["semantic_engine:8007"]
+    metrics_path: /metrics/
+
+  # ── Gap Detection ─────────────────────────────
+  - job_name: "gap_detection"
+    static_configs:
+      - targets: ["gap_detection:8008"]
+    metrics_path: /metrics/
+
+  # ── Schema Factory ────────────────────────────
+  - job_name: "schema_factory"
+    static_configs:
+      - targets: ["schema_factory:8009"]
+    metrics_path: /metrics/
+
+  # ── Synchronization ───────────────────────────
+  - job_name: "synchronization"
+    static_configs:
+      - targets: ["synchronization:8010"]
+    metrics_path: /metrics/
+
+  # ── Dashboard Backend ─────────────────────────
+  - job_name: "dashboard_backend"
+    static_configs:
+      - targets: ["dashboard_backend:8011"]
+    metrics_path: /metrics/
+
+  # ── SEO Engine ────────────────────────────────
+  - job_name: "seo_engine"
+    static_configs:
+      - targets: ["seo_engine:8012"]
+    metrics_path: /metrics/
+
+  # ── GEO Engine ────────────────────────────────
+  - job_name: "geo_engine"
+    static_configs:
+      - targets: ["geo_engine:8013"]
+    metrics_path: /metrics/
+
+  # ── AEO Engine ────────────────────────────────
+  - job_name: "aeo_engine"
+    static_configs:
+      - targets: ["aeo_engine:8014"]
+    metrics_path: /metrics/
+
+  # ── PostgreSQL ────────────────────────────────
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["postgres_exporter:9187"]
+
+  # ── Redis ─────────────────────────────────────
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis_exporter:9121"]
+
+  # ── Celery Workers (via Flower) ───────────────
+  - job_name: "celery"
+    static_configs:
+      - targets: ["flower:5555"]
+    metrics_path: /metrics
+
+  # ── Node Exporter (host metrics) ─────────────
+  - job_name: "node_compute"
+    static_configs:
+      - targets: ["node_exporter_compute:9100"]
+    relabel_configs:
+      - target_label: instance
+        replacement:  "node_1_compute"
+
+  - job_name: "node_db"
+    static_configs:
+      - targets: ["node_exporter_db:9100"]
+    relabel_configs:
+      - target_label: instance
+        replacement:  "node_2_database"
+
+  # ── Prometheus self-monitoring ────────────────
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

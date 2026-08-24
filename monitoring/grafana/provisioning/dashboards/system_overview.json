@@ -1,0 +1,216 @@
+{
+  "__inputs": [],
+  "__requires": [{"type": "grafana", "id": "grafana", "name": "Grafana", "version": "11.0.0"}],
+  "annotations": {"list": []},
+  "description": "DATA ENGINE — System Overview Dashboard",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Documents Completed (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "targets": [{
+        "expr": "sum(increase(data_engine_documents_ingested_total{status='completed'}[24h]))",
+        "legendFormat": "Completed"
+      }],
+      "options": {"colorMode": "background", "graphMode": "area"}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Embeddings Generated (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "targets": [{
+        "expr": "sum(increase(data_engine_embeddings_generated_total[24h]))",
+        "legendFormat": "Embeddings"
+      }],
+      "options": {"colorMode": "background", "graphMode": "area"}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Search Requests (24h)",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "targets": [{
+        "expr": "sum(increase(data_engine_search_requests_total[24h]))",
+        "legendFormat": "Searches"
+      }],
+      "options": {"colorMode": "background", "graphMode": "area"}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Error Rate",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "targets": [{
+        "expr": "sum(rate(data_engine_http_requests_total{status=~'5..'}[5m])) / sum(rate(data_engine_http_requests_total[5m])) * 100",
+        "legendFormat": "Error %"
+      }],
+      "options": {
+        "colorMode": "background",
+        "thresholds": {
+          "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 1},
+            {"color": "red", "value": 5}
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Request Rate by Service",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
+      "targets": [{
+        "expr": "sum(rate(data_engine_http_requests_total[5m])) by (job)",
+        "legendFormat": "{{job}}"
+      }],
+      "options": {"legend": {"displayMode": "table", "placement": "right"}}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "p95 Response Time by Service",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(data_engine_http_request_duration_seconds_bucket[5m])) by (job, le))",
+        "legendFormat": "{{job}} p95"
+      }],
+      "fieldConfig": {
+        "defaults": {"unit": "s"}
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Embedding Generation Rate",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [{
+        "expr": "sum(rate(data_engine_embeddings_generated_total[5m])) by (provider)",
+        "legendFormat": "{{provider}}"
+      }]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Vector Search Latency (p50 / p95 / p99)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(data_engine_search_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, rate(data_engine_search_latency_seconds_bucket[5m]))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, rate(data_engine_search_latency_seconds_bucket[5m]))", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Avg Quality Score (1-10)",
+      "description": "Average Google Ads Quality Score equivalent across all generated content drafts. QS ≥ 8 beats paid ads.",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "targets": [{
+        "expr": "avg(data_engine_content_quality_score)",
+        "legendFormat": "Avg QS"
+      }],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "thresholds": {
+          "steps": [
+            {"color": "red",    "value": null},
+            {"color": "yellow", "value": 6},
+            {"color": "green",  "value": 8}
+          ]
+        }
+      },
+      "fieldConfig": {"defaults": {"min": 1, "max": 10}}
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Drafts Beating Paid Ads",
+      "description": "Content drafts with Quality Score ≥ 8.0 — these rank above Google sponsored ads.",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "targets": [{
+        "expr": "sum(data_engine_content_drafts_beats_paid_ads_total)",
+        "legendFormat": "Beats Ads"
+      }],
+      "options": {"colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}}}
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "GEO Score / AEO Score / Quality Score over Time",
+      "description": "Tracks average GEO visibility score, AEO answer readiness, and QS per writing agent run.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+      "targets": [
+        {
+          "expr": "avg(data_engine_content_geo_score)",
+          "legendFormat": "GEO Score (0-100)"
+        },
+        {
+          "expr": "avg(data_engine_content_aeo_score)",
+          "legendFormat": "AEO Score (0-100)"
+        },
+        {
+          "expr": "avg(data_engine_content_quality_score) * 10",
+          "legendFormat": "Quality Score ×10 (scaled)"
+        }
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "right"}},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100}}
+    },
+    {
+      "id": 12,
+      "type": "bargauge",
+      "title": "Content Rank Distribution vs Paid Ads",
+      "description": "Distribution of projected SERP positions for all generated drafts.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "targets": [
+        {"expr": "sum(data_engine_drafts_above_all_ads_total)",        "legendFormat": "#1 — Above ALL ads (QS 8.5+)"},
+        {"expr": "sum(data_engine_drafts_above_most_ads_total)",       "legendFormat": "#1-2 — Above most ads (QS 8+)"},
+        {"expr": "sum(data_engine_drafts_competitive_with_ads_total)", "legendFormat": "#3-5 — Competitive (QS 6-8)"},
+        {"expr": "sum(data_engine_drafts_below_ads_total)",            "legendFormat": "#6+ — Below ads (QS <6)"}
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "displayMode": "gradient"
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Writing Agent Drafts Generated (24h)",
+      "description": "Content drafts generated by the Gemini writing agent per hour, with QS gate pass/fail rate.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "targets": [
+        {
+          "expr": "sum(increase(data_engine_writing_agent_drafts_total[1h]))",
+          "legendFormat": "Drafts generated/hr"
+        },
+        {
+          "expr": "sum(increase(data_engine_writing_agent_rewrites_total[1h]))",
+          "legendFormat": "QS gate rewrites/hr"
+        }
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "right"}}
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["data-engine", "overview"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "DATA ENGINE — System Overview",
+  "uid": "data-engine-overview",
+  "version": 1
+}

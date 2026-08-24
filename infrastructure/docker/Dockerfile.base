@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DATA ENGINE — Shared Base Image
+# Builds ONCE. All service/worker/gateway images inherit from this.
+#
+# What lives here:
+#   • System packages (build-essential, libpq-dev, libmagic1, curl)
+#   • Heavy/compiled Python packages (torch ~350MB, scipy, transformers, spacy…)
+#
+# To rebuild the base (only needed when requirements-base.txt changes):
+#   docker build -f infrastructure/docker/Dockerfile.base -t data_engine-base .
+#
+# All other images rebuild in seconds because their only variable layers are:
+#   pip install -r requirements.txt  (~30 packages, ~10 s)
+#   COPY <service source>            (~1 s)
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM python:3.11-slim AS base
+
+# ── System packages ──────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        libmagic1 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Heavy Python packages ─────────────────────────────────────────────────────
+# Copied first so changes to service code never bust this layer.
+COPY requirements-base.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-base.txt
+
+ENV PYTHONPATH=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
