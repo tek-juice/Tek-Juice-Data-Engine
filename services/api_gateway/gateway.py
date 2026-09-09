@@ -44,8 +44,8 @@ app = FastAPI(
     description="Central API Gateway — authentication, routing, rate limiting.",
     version=APP_VERSION,
     lifespan=lifespan,
-    docs_url="/docs" if _settings.is_development else None,
-    redoc_url=None,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # ── Prometheus metrics endpoint ───────────────────────────────────────────────

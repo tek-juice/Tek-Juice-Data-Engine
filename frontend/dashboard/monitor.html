@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Engine — Monitor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --muted:    #8b949e;
+    --green:    #3fb950;
+    --yellow:   #d29922;
+    --red:      #f85149;
+    --blue:     #58a6ff;
+    --purple:   #bc8cff;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+
+  /* ── Login ── */
+  #login-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  .login-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 36px 40px;
+    width: 340px;
+  }
+  .login-box h1 {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .login-box p {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 24px;
+  }
+  .form-group { margin-bottom: 14px; }
+  .form-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+  .form-group input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 12px;
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  .form-group input:focus { border-color: var(--blue); }
+  .btn-primary {
+    width: 100%;
+    background: var(--blue);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 6px;
+    transition: opacity .15s;
+  }
+  .btn-primary:hover { opacity: .85; }
+  .login-error {
+    color: var(--red);
+    font-size: 12px;
+    margin-top: 10px;
+    display: none;
+  }
+
+  /* ── App shell ── */
+  #app { display: none; }
+
+  .topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 12px; }
+  .topbar-title { font-size: 15px; font-weight: 700; }
+  .topbar-sub { font-size: 11px; color: var(--muted); }
+  .live-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: .3; }
+  }
+  .topbar-right { display: flex; align-items: center; gap: 16px; }
+  .btn-logout {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 5px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-logout:hover { color: var(--text); border-color: var(--muted); }
+  .btn-refresh {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--blue);
+    border-radius: 5px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-refresh:hover { background: rgba(88,166,255,.08); }
+
+  /* ── Layout ── */
+  .layout { display: grid; grid-template-columns: 200px 1fr; min-height: calc(100vh - 52px); }
+
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 16px 0;
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 20px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    border-left: 3px solid transparent;
+    transition: all .12s;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(255,255,255,.03); }
+  .nav-item.active { color: var(--text); border-left-color: var(--blue); background: rgba(88,166,255,.06); }
+  .nav-icon { font-size: 14px; width: 16px; text-align: center; }
+  .nav-section {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+    padding: 16px 20px 6px;
+  }
+
+  .main { padding: 24px; overflow-y: auto; }
+
+  /* ── Panels ── */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── Stat cards ── */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    margin-bottom: 6px;
+  }
+  .stat-value {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .stat-value.green  { color: var(--green); }
+  .stat-value.red    { color: var(--red); }
+  .stat-value.yellow { color: var(--yellow); }
+  .stat-value.blue   { color: var(--blue); }
+
+  /* ── Section heading ── */
+  .section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 12px;
+    margin-top: 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title:first-child { margin-top: 0; }
+  .count-badge {
+    font-size: 10px;
+    background: var(--border);
+    color: var(--muted);
+    border-radius: 10px;
+    padding: 1px 7px;
+  }
+
+  /* ── Table ── */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    background: rgba(255,255,255,.03);
+    padding: 9px 14px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr { border-bottom: 1px solid rgba(48,54,61,.6); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,.02); }
+  tbody td {
+    padding: 9px 14px;
+    font-size: 12.5px;
+    vertical-align: middle;
+  }
+  .mono { font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace; font-size: 11.5px; }
+
+  /* ── Status badge ── */
+  .badge {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+  }
+  .badge-ok       { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge-fail     { background: rgba(248,81,73,.15);  color: var(--red); }
+  .badge-warn     { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .badge-info     { background: rgba(88,166,255,.15); color: var(--blue); }
+  .badge-queued   { background: rgba(188,140,255,.15); color: var(--purple); }
+
+  /* ── Live feed ── */
+  #live-feed {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    height: 420px;
+    overflow-y: auto;
+    padding: 12px;
+    font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+  }
+  .feed-line { display: flex; gap: 10px; padding: 2px 0; }
+  .feed-time { color: var(--muted); flex-shrink: 0; width: 80px; }
+  .feed-svc  { color: var(--blue); flex-shrink: 0; width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed-msg  { color: var(--text); }
+  .feed-fail .feed-msg { color: var(--red); }
+  .feed-warn .feed-msg { color: var(--yellow); }
+  .feed-conn { color: var(--green); font-style: italic; }
+
+  /* ── Webhook log ── */
+  .wh-ok   td:first-child { border-left: 3px solid var(--green); }
+  .wh-fail td:first-child { border-left: 3px solid var(--red); }
+
+  /* ── Empty state ── */
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* ── Loading spinner ── */
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Pill bar (pipeline stages) ── */
+  .pipeline-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    display: grid;
+    grid-template-columns: 180px 60px 80px 80px 80px 80px 1fr;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+  }
+  .pipeline-row:hover { background: rgba(255,255,255,.02); }
+  .stage-name { font-weight: 600; color: var(--text); }
+  .bar-wrap { grid-column: span 1; }
+  .num { font-family: "SF Mono", Consolas, monospace; font-size: 12px; text-align: right; }
+  .num.red { color: var(--red); }
+  .mini-bar-bg { background: var(--border); border-radius: 3px; height: 5px; overflow: hidden; }
+  .mini-bar-fill { height: 5px; border-radius: 3px; background: var(--blue); transition: width .4s; }
+  .mini-bar-fill.red { background: var(--red); }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ── Login ── -->
+<div id="login-screen">
+  <div class="login-box">
+    <h1>Data Engine</h1>
+    <p>Monitor &amp; Diagnostics</p>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="you@tekjuice.co.uk" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" id="login-btn">Sign in</button>
+    <div class="login-error" id="login-error">Invalid credentials. Please try again.</div>
+  </div>
+</div>
+
+<!-- ── App ── -->
+<div id="app">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="live-dot" id="ws-dot" title="Live feed"></div>
+      <div>
+        <div class="topbar-title">Data Engine Monitor</div>
+        <div class="topbar-sub" id="topbar-tenant">Tek Juice</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="last-refresh" style="font-size:11px;color:var(--muted)"></span>
+      <button class="btn-refresh" id="refresh-btn">Refresh</button>
+      <button class="btn-logout" id="logout-btn">Sign out</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <div class="nav-section">Overview</div>
+      <div class="nav-item active" data-panel="overview">
+        <span class="nav-icon">◈</span> Overview
+      </div>
+      <div class="nav-section">Diagnostics</div>
+      <div class="nav-item" data-panel="errors">
+        <span class="nav-icon">⚠</span> Error Log
+      </div>
+      <div class="nav-item" data-panel="pipeline">
+        <span class="nav-icon">⟳</span> Pipeline
+      </div>
+      <div class="nav-item" data-panel="webhooks">
+        <span class="nav-icon">↗</span> Webhooks
+      </div>
+      <div class="nav-item" data-panel="activity">
+        <span class="nav-icon">≡</span> Activity Log
+      </div>
+      <div class="nav-section">Live</div>
+      <div class="nav-item" data-panel="live">
+        <span class="nav-icon">●</span> Live Feed
+      </div>
+    </nav>
+
+    <main class="main">
+
+      <!-- Overview -->
+      <div class="panel active" id="panel-overview">
+        <div class="stat-grid" id="stat-grid">
+          <div class="stat-card"><div class="stat-label">Pages Processed</div><div class="stat-value blue" id="s-completed">—</div></div>
+          <div class="stat-card"><div class="stat-label">Failed Pages</div><div class="stat-value red" id="s-failed">—</div></div>
+          <div class="stat-card"><div class="stat-label">Queued</div><div class="stat-value yellow" id="s-queued">—</div></div>
+          <div class="stat-card"><div class="stat-label">Gap Analyses</div><div class="stat-value blue" id="s-gaps">—</div></div>
+          <div class="stat-card"><div class="stat-label">Schemas Generated</div><div class="stat-value green" id="s-schemas">—</div></div>
+          <div class="stat-card"><div class="stat-label">Trends Today</div><div class="stat-value blue" id="s-trends">—</div></div>
+        </div>
+
+        <div class="section-title">Recent Documents <span class="count-badge" id="doc-count">0</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Page / File</th>
+              <th>Status</th>
+              <th>Gap Score</th>
+              <th>Severity</th>
+              <th>Last Updated</th>
+            </tr></thead>
+            <tbody id="doc-table-body"><tr><td colspan="5" class="empty"><span class="spinner"></span> Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Error Log -->
+      <div class="panel" id="panel-errors">
+        <div class="section-title">Pipeline Error Log <span class="count-badge" id="err-count">0</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Time</th>
+              <th>Service</th>
+              <th>Event Type</th>
+              <th>Error Detail</th>
+            </tr></thead>
+            <tbody id="err-table-body"><tr><td colspan="4" class="empty"><span class="spinner"></span> Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Pipeline -->
+      <div class="panel" id="panel-pipeline">
+        <div class="section-title">Pipeline Stage Health — Last 24 Hours</div>
+        <div style="display:grid;grid-template-columns:180px 60px 80px 80px 80px 80px 1fr;gap:10px;padding:0 16px 8px;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">
+          <span>Stage</span><span style="text-align:right">Count</span><span style="text-align:right">Errors</span><span style="text-align:right">Avg ms</span><span style="text-align:right">P95 ms</span><span style="text-align:right">Max ms</span><span>Error rate</span>
+        </div>
+        <div id="pipeline-rows"><div class="empty"><span class="spinner"></span> Loading...</div></div>
+      </div>
+
+      <!-- Webhooks -->
+      <div class="panel" id="panel-webhooks">
+        <div class="section-title">Webhook Delivery Log <span class="count-badge" id="wh-count">0</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Time</th>
+              <th>Event</th>
+              <th>Status</th>
+              <th>HTTP</th>
+              <th>Duration</th>
+              <th>Error</th>
+            </tr></thead>
+            <tbody id="wh-table-body"><tr><td colspan="6" class="empty"><span class="spinner"></span> Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="panel" id="panel-activity">
+        <div class="section-title">System Activity — Last 24 Hours <span class="count-badge" id="act-count">0</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Time</th>
+              <th>Service</th>
+              <th>Event</th>
+              <th>Status</th>
+              <th>Duration</th>
+            </tr></thead>
+            <tbody id="act-table-body"><tr><td colspan="5" class="empty"><span class="spinner"></span> Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Live Feed -->
+      <div class="panel" id="panel-live">
+        <div class="section-title">Live Activity Feed <span id="ws-status" class="badge badge-warn" style="text-transform:none;letter-spacing:0">Connecting...</span></div>
+        <div id="live-feed"><div class="feed-conn">Connecting to live feed...</div></div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+  const BASE    = 'http://54.86.109.228:9600'
+  const DASH    = 'http://54.86.109.228:9600'   // dashboard backend proxied via gateway
+  const WS_BASE = 'ws://54.86.109.228:9600'
+
+  let accessToken  = localStorage.getItem('de_access_token')  || ''
+  let refreshToken = localStorage.getItem('de_refresh_token') || ''
+  let wsConn       = null
+  let currentEndpointId = null
+
+  // ── Auth helpers ──────────────────────────────────────────────────────────
+
+  async function apiGet(path) {
+    const res = await fetch(BASE + path, {
+      headers: { 'Authorization': 'Bearer ' + accessToken }
+    })
+    if (res.status === 401) { doLogout(); return null; }
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }
+
+  async function apiFetch(path, opts = {}) {
+    const res = await fetch(BASE + path, {
+      ...opts,
+      headers: { 'Authorization': 'Bearer ' + accessToken, ...(opts.headers || {}) }
+    })
+    if (res.status === 401) { doLogout(); return null; }
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }
+
+  // ── Login ─────────────────────────────────────────────────────────────────
+
+  document.getElementById('login-btn').addEventListener('click', doLogin)
+  document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin() })
+
+  async function doLogin() {
+    const email    = document.getElementById('login-email').value.trim()
+    const password = document.getElementById('login-password').value
+    const errEl    = document.getElementById('login-error')
+    errEl.style.display = 'none'
+
+    const body = new URLSearchParams({ username: email, password })
+    try {
+      const res = await fetch(BASE + '/api/v1/auth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+      })
+      if (!res.ok) { errEl.style.display = 'block'; return; }
+      const data = await res.json()
+      accessToken  = data.access_token
+      refreshToken = data.refresh_token
+      localStorage.setItem('de_access_token',  accessToken)
+      localStorage.setItem('de_refresh_token', refreshToken)
+      showApp()
+    } catch (e) {
+      errEl.style.display = 'block'
+    }
+  }
+
+  function doLogout() {
+    accessToken = ''; refreshToken = ''
+    localStorage.removeItem('de_access_token')
+    localStorage.removeItem('de_refresh_token')
+    if (wsConn) wsConn.close()
+    document.getElementById('app').style.display   = 'none'
+    document.getElementById('login-screen').style.display = 'flex'
+  }
+
+  document.getElementById('logout-btn').addEventListener('click', doLogout)
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+
+  if (accessToken) showApp()
+
+  function showApp() {
+    document.getElementById('login-screen').style.display = 'none'
+    document.getElementById('app').style.display = 'block'
+    loadAll()
+    connectWS()
+  }
+
+  // ── Navigation ────────────────────────────────────────────────────────────
+
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'))
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'))
+      item.classList.add('active')
+      document.getElementById('panel-' + item.dataset.panel).classList.add('active')
+      if (item.dataset.panel === 'live') connectWS()
+    })
+  })
+
+  document.getElementById('refresh-btn').addEventListener('click', loadAll)
+
+  // ── Load all panels ───────────────────────────────────────────────────────
+
+  async function loadAll() {
+    document.getElementById('last-refresh').textContent = 'Refreshing...'
+    await Promise.allSettled([
+      loadOverview(),
+      loadErrors(),
+      loadPipeline(),
+      loadWebhooks(),
+      loadActivity()
+    ])
+    document.getElementById('last-refresh').textContent =
+      'Updated ' + new Date().toLocaleTimeString()
+  }
+
+  // ── Overview ──────────────────────────────────────────────────────────────
+
+  async function loadOverview() {
+    try {
+      const [overview, docs] = await Promise.all([
+        apiGet('/api/v1/dashboard/overview'),
+        apiGet('/api/v1/dashboard/documents?page_size=20')
+      ])
+      if (!overview || !docs) return
+
+      document.getElementById('s-completed').textContent = fmt(overview.documents_completed)
+      document.getElementById('s-failed').textContent    = fmt(overview.documents_failed)
+      document.getElementById('s-queued').textContent    = fmt(overview.documents_queued)
+      document.getElementById('s-gaps').textContent      = fmt(overview.gap_analyses_run)
+      document.getElementById('s-schemas').textContent   = fmt(overview.schemas_generated)
+      document.getElementById('s-trends').textContent    = fmt(overview.trends_today)
+      document.getElementById('doc-count').textContent   = docs.total || 0
+
+      const tbody = document.getElementById('doc-table-body')
+      if (!docs.items || docs.items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No documents yet</td></tr>'
+        return
+      }
+      tbody.innerHTML = docs.items.map(d => `
+        <tr>
+          <td class="mono" title="${d.filename}">${trunc(d.filename, 45)}</td>
+          <td>${statusBadge(d.status)}</td>
+          <td>${d.gap_score != null ? (d.gap_score * 100).toFixed(0) + '%' : '<span style="color:var(--muted)">—</span>'}</td>
+          <td>${d.severity ? severityBadge(d.severity) : '<span style="color:var(--muted)">—</span>'}</td>
+          <td style="color:var(--muted)">${timeAgo(d.updated_at)}</td>
+        </tr>`).join('')
+    } catch(e) { console.error('overview', e) }
+  }
+
+  // ── Error Log ─────────────────────────────────────────────────────────────
+
+  async function loadErrors() {
+    try {
+      const data = await apiGet('/api/v1/dashboard/metrics/errors?limit=100')
+      if (!data) return
+      document.getElementById('err-count').textContent = data.length
+      const tbody = document.getElementById('err-table-body')
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty" style="color:var(--green)">No errors recorded</td></tr>'
+        return
+      }
+      tbody.innerHTML = data.map(e => `
+        <tr>
+          <td style="color:var(--muted);white-space:nowrap">${fmtTime(e.created_at)}</td>
+          <td><span class="badge badge-info">${e.service || '—'}</span></td>
+          <td class="mono">${e.event_type || '—'}</td>
+          <td style="color:var(--red)">${errDetail(e.payload)}</td>
+        </tr>`).join('')
+    } catch(e) { console.error('errors', e) }
+  }
+
+  // ── Pipeline ──────────────────────────────────────────────────────────────
+
+  async function loadPipeline() {
+    try {
+      const data = await apiGet('/api/v1/dashboard/metrics/pipeline')
+      if (!data) return
+      const wrap = document.getElementById('pipeline-rows')
+      if (!data.length) {
+        wrap.innerHTML = '<div class="empty">No pipeline events in the last 24 hours</div>'
+        return
+      }
+      const maxCount = Math.max(...data.map(r => r.count), 1)
+      wrap.innerHTML = data.map(r => {
+        const errRate = r.count > 0 ? (r.errors / r.count) : 0
+        const barPct  = Math.round((r.count / maxCount) * 100)
+        const errPct  = Math.round(errRate * 100)
+        return `
+        <div class="pipeline-row">
+          <span class="stage-name">${r.event_type.replace('document.', '')}</span>
+          <span class="num">${fmt(r.count)}</span>
+          <span class="num ${r.errors > 0 ? 'red' : ''}">${fmt(r.errors)}</span>
+          <span class="num">${r.avg_ms ? Math.round(r.avg_ms) : '—'}</span>
+          <span class="num">${r.p95_ms ? Math.round(r.p95_ms) : '—'}</span>
+          <span class="num">${r.max_ms ? Math.round(r.max_ms) : '—'}</span>
+          <div>
+            <div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">${errPct}% errors</div>
+            <div class="mini-bar-bg">
+              <div class="mini-bar-fill ${errPct > 5 ? 'red' : ''}" style="width:${errPct > 0 ? Math.max(errPct, 3) : barPct}%"></div>
+            </div>
+          </div>
+        </div>`
+      }).join('')
+    } catch(e) { console.error('pipeline', e) }
+  }
+
+  // ── Webhooks ──────────────────────────────────────────────────────────────
+
+  async function loadWebhooks() {
+    try {
+      // First get the registered webhook endpoints
+      const whList = await apiGet('/api/v1/auth/webhooks')
+      if (!whList || !whList.webhooks || !whList.webhooks.length) {
+        document.getElementById('wh-table-body').innerHTML =
+          '<tr><td colspan="6" class="empty">No webhook endpoints registered yet</td></tr>'
+        return
+      }
+
+      // Use first active endpoint
+      const endpoint = whList.webhooks.find(w => w.is_active) || whList.webhooks[0]
+      currentEndpointId = endpoint.id
+
+      const data = await apiGet(`/api/v1/auth/webhooks/${endpoint.id}/logs?limit=100`)
+      if (!data) return
+
+      document.getElementById('wh-count').textContent = data.count || 0
+      const tbody = document.getElementById('wh-table-body')
+      if (!data.logs || !data.logs.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No delivery attempts yet</td></tr>'
+        return
+      }
+      tbody.innerHTML = data.logs.map(l => `
+        <tr class="${l.success ? 'wh-ok' : 'wh-fail'}">
+          <td style="color:var(--muted);white-space:nowrap">${fmtTime(l.attempted_at)}</td>
+          <td class="mono">${l.event_type}</td>
+          <td>${l.success
+            ? '<span class="badge badge-ok">Delivered</span>'
+            : '<span class="badge badge-fail">Failed</span>'}</td>
+          <td><span class="badge ${l.status_code >= 200 && l.status_code < 300 ? 'badge-ok' : 'badge-fail'}">${l.status_code || 'No response'}</span></td>
+          <td style="color:var(--muted)">${l.duration_ms != null ? l.duration_ms + ' ms' : '—'}</td>
+          <td style="color:var(--red);font-size:11.5px">${l.error || ''}</td>
+        </tr>`).join('')
+    } catch(e) { console.error('webhooks', e) }
+  }
+
+  // ── Activity Log ──────────────────────────────────────────────────────────
+
+  async function loadActivity() {
+    try {
+      const data = await apiGet('/api/v1/dashboard/activity-log?hours=24&limit=100')
+      if (!data) return
+      document.getElementById('act-count').textContent = data.length
+      const tbody = document.getElementById('act-table-body')
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No activity in the last 24 hours</td></tr>'
+        return
+      }
+      tbody.innerHTML = data.map(e => `
+        <tr>
+          <td style="color:var(--muted);white-space:nowrap">${fmtTime(e.created_at)}</td>
+          <td><span class="badge badge-info">${e.service || '—'}</span></td>
+          <td class="mono">${e.event_type || '—'}</td>
+          <td>${e.status === 'success'
+            ? '<span class="badge badge-ok">OK</span>'
+            : '<span class="badge badge-fail">Failed</span>'}</td>
+          <td style="color:var(--muted)">${e.duration_ms != null ? e.duration_ms + ' ms' : '—'}</td>
+        </tr>`).join('')
+    } catch(e) { console.error('activity', e) }
+  }
+
+  // ── WebSocket Live Feed ───────────────────────────────────────────────────
+
+  function connectWS() {
+    if (wsConn && wsConn.readyState < 2) return   // already open or connecting
+    if (!accessToken) return
+
+    const feed    = document.getElementById('live-feed')
+    const statusEl = document.getElementById('ws-status')
+    const dotEl    = document.getElementById('ws-dot')
+
+    wsConn = new WebSocket(`${WS_BASE}/ws/activity?token=${accessToken}`)
+
+    wsConn.onopen = () => {
+      statusEl.textContent = 'Connected'
+      statusEl.className   = 'badge badge-ok'
+      dotEl.style.background = 'var(--green)'
+      appendFeedLine(feed, null, null, 'Connected to live feed', 'feed-conn')
+    }
+
+    wsConn.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data)
+        if (msg.type === 'heartbeat' || msg.type === 'pong') return
+        const cls = msg.type === 'error' || (msg.status === 'failure') ? 'feed-fail'
+                  : msg.type === 'warning' ? 'feed-warn' : ''
+        const svc  = msg.service || msg.type || ''
+        const text = msg.message || msg.event_type || JSON.stringify(msg)
+        appendFeedLine(feed, new Date().toLocaleTimeString(), svc, text, cls)
+      } catch (_) {}
+    }
+
+    wsConn.onclose = () => {
+      statusEl.textContent = 'Disconnected'
+      statusEl.className   = 'badge badge-warn'
+      dotEl.style.background = 'var(--yellow)'
+      setTimeout(() => {
+        if (document.getElementById('panel-live').classList.contains('active')) connectWS()
+      }, 5000)
+    }
+
+    wsConn.onerror = () => {
+      statusEl.textContent = 'Error'
+      statusEl.className   = 'badge badge-fail'
+      dotEl.style.background = 'var(--red)'
+    }
+
+    // Keep-alive ping every 25s
+    setInterval(() => {
+      if (wsConn && wsConn.readyState === 1) wsConn.send(JSON.stringify({ type: 'ping' }))
+    }, 25000)
+  }
+
+  function appendFeedLine(feed, time, svc, msg, cls) {
+    const line = document.createElement('div')
+    line.className = 'feed-line ' + (cls || '')
+    line.innerHTML = `
+      <span class="feed-time">${time || new Date().toLocaleTimeString()}</span>
+      <span class="feed-svc">${svc || ''}</span>
+      <span class="feed-msg">${escHtml(msg)}</span>`
+    feed.appendChild(line)
+    // Keep max 200 lines
+    while (feed.children.length > 200) feed.removeChild(feed.firstChild)
+    feed.scrollTop = feed.scrollHeight
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function fmt(n) { return n != null ? Number(n).toLocaleString() : '—' }
+  function trunc(s, n) { return s && s.length > n ? s.slice(0, n) + '…' : (s || '—') }
+  function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '—'
+    const d = new Date(ts)
+    return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) + ' ' +
+           d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+  }
+
+  function timeAgo(ts) {
+    if (!ts) return '—'
+    const diff = (Date.now() - new Date(ts)) / 1000
+    if (diff < 60)   return Math.round(diff) + 's ago'
+    if (diff < 3600) return Math.round(diff / 60) + 'm ago'
+    if (diff < 86400) return Math.round(diff / 3600) + 'h ago'
+    return Math.round(diff / 86400) + 'd ago'
+  }
+
+  function statusBadge(s) {
+    const map = {
+      completed:    'badge-ok',
+      failed:       'badge-fail',
+      queued:       'badge-queued',
+      preprocessing:'badge-info',
+      chunking:     'badge-info',
+      embedding:    'badge-info',
+      storing:      'badge-info',
+      deleted:      'badge-warn',
+    }
+    return `<span class="badge ${map[s] || 'badge-info'}">${s || '—'}</span>`
+  }
+
+  function severityBadge(s) {
+    const map = { low:'badge-ok', medium:'badge-warn', high:'badge-fail', critical:'badge-fail' }
+    return `<span class="badge ${map[s] || 'badge-info'}">${s}</span>`
+  }
+
+  function errDetail(payload) {
+    if (!payload) return '—'
+    try {
+      const p = typeof payload === 'string' ? JSON.parse(payload) : payload
+      return escHtml(p.error || p.error_message || p.message || JSON.stringify(p)).slice(0, 120)
+    } catch { return escHtml(String(payload)).slice(0, 120) }
+  }
+
+  // Auto-refresh every 60 seconds
+  setInterval(() => { if (accessToken) loadAll() }, 60000)
+</script>
+</body>
+</html>
