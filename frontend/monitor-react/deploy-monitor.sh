@@ -554,8 +554,15 @@ sed -i "s|{ label: 'Telemetry',       to: '/telemetry' }|{ label: 'Monitor',    
 echo "✓ AppShell nav patched"
 
 # ── 6. Rebuild and restart the container ─────────────────────────────────────
-docker compose down
-docker compose up -d --build
+# Support both docker-compose v1 (hyphen) and docker compose v2 (plugin).
+if command -v docker-compose &>/dev/null; then
+  DC="docker-compose"
+else
+  DC="docker compose"
+fi
+
+$DC down
+$DC up -d --build
 
 echo ""
 echo "✓ Deploy complete — Monitor page live at http://54.86.109.228:9601/telemetry"
