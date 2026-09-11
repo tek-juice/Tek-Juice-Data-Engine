@@ -213,13 +213,13 @@ function ErrorLog({ errors, loading }: { errors: TelemetryError[]; loading: bool
                   <span
                     className="block truncate"
                     style={{ color: 'var(--danger)' }}
-                    title={err.error_message ?? err.message ?? ''}
+                    title={err.error ?? ''}
                   >
-                    {err.error_message ?? err.message ?? '—'}
+                    {err.error ?? '—'}
                   </span>
                 </td>
                 <td className="py-2.5 px-6 text-sm text-right" style={{ color: 'var(--text-3)' }}>
-                  {relativeTime(err.created_at ?? err.timestamp)}
+                  {relativeTime(err.timestamp)}
                 </td>
               </tr>
             ))}
@@ -343,7 +343,7 @@ function WebhookLogs({ logs, loading }: { logs: WebhookLogEntry[]; loading: bool
             onMouseLeave={e => (e.currentTarget.style.background = '')}
           >
             <td className="py-2.5 px-6 font-medium" style={{ color: 'var(--text)' }}>
-              {(log as Record<string, unknown>).event_type as string ?? '—'}
+              {log.event_type ?? '—'}
             </td>
             <td className="py-2.5 px-6 text-center">
               <span
@@ -361,7 +361,7 @@ function WebhookLogs({ logs, loading }: { logs: WebhookLogEntry[]; loading: bool
               </span>
             </td>
             <td className="py-2.5 px-6 text-right" style={{ color: 'var(--text-3)' }}>
-              {relativeTime(log.delivered_at ?? log.created_at)}
+              {relativeTime(log.attempted_at)}
             </td>
           </tr>
         ))}
@@ -458,7 +458,7 @@ function LiveFeed({ events }: { events: ActivityLogEntry[] }) {
   }, [events.length]);
 
   return (
-    <Card className="overflow-hidden flex flex-col" style={{ maxHeight: 420 }}>
+    <div className="overflow-hidden flex flex-col" style={{ maxHeight: 420, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '0.5rem' }}>
       <div className="px-6 py-4 flex-shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-center gap-2.5">
           <Dot color="var(--success)" />
@@ -501,7 +501,7 @@ function LiveFeed({ events }: { events: ActivityLogEntry[] }) {
         )}
         <div ref={bottomRef} />
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -580,7 +580,7 @@ export default function Monitor() {
   // ── Derived values ──────────────────────────────────────────────────────────
 
   const errorRate   = telemetry?.error_rate ?? 0;
-  const totalEvents = telemetry?.total_events ?? 0;
+  const totalEvents = telemetry ? Object.values(telemetry.event_counts).reduce((a, b) => a + b, 0) : 0;
   const queueDepth  = queue?.queue_depth ?? (queue as Record<string, unknown> | null)?.['depth'] as number ?? 0;
   const activeHooks = webhooks.filter(w => w.is_active !== false).length;
 
