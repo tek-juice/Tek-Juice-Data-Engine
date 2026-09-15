@@ -19,7 +19,9 @@ config = context.config
 settings = get_settings()
 
 # Override sqlalchemy.url from settings (avoids hardcoding in alembic.ini)
-config.set_main_option("sqlalchemy.url", settings.sync_database_url)
+# Use async URL (postgresql+asyncpg://) because the online migration runner
+# uses async_engine_from_config — psycopg2 (sync) is not accepted.
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
