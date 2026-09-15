@@ -56,14 +56,14 @@ def upgrade() -> None:
             "event_types",
             sa.ARRAY(sa.Text()),
             nullable=False,
-            server_default="'{\"*\"}'",
+            server_default=sa.text("ARRAY['*']"),
             comment="Events this endpoint subscribes to. Use [\"*\"] for all.",
         ),
         sa.Column(
             "description",
             sa.Text(),
             nullable=False,
-            server_default="''",
+            server_default=sa.text("''"),
         ),
         sa.Column(
             "is_active",
