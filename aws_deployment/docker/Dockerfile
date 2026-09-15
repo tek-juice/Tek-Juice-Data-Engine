@@ -45,4 +45,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:9600/health || exit 1
 
 # Start the application on port 9600
-CMD ["uvicorn", "services.api_gateway.main:app", "--host", "0.0.0.0", "--port", "9600", "--workers", "4"]
+CMD ["uvicorn", "services.api_gateway.gateway:app", "--host", "0.0.0.0", "--port", "9600", "--workers", "4", "--loop", "uvloop"]
