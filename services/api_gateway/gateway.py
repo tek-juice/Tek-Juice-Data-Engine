@@ -21,7 +21,6 @@ from shared.middleware.tenant import TenantContextMiddleware
 from services.api_gateway.routers.auth_router import router as auth_router
 from services.api_gateway.routers.proxy_router import router as proxy_router
 from services.api_gateway.routers.health_router import router as health_router
-from services.api_gateway.routers.connect_ui import router as connect_router
 from services.api_gateway.routers.onboard_router import router as onboard_router
 from services.api_gateway.routers.sdk_router import router as sdk_router
 
@@ -76,6 +75,5 @@ app.include_router(health_router)
 app.include_router(auth_router,    prefix=f"{API_PREFIX}/auth")
 app.include_router(proxy_router,   prefix=API_PREFIX)
 # ── Self-service onboarding (no auth required) ────────────────────────────────
-app.include_router(connect_router)
 app.include_router(onboard_router)
 app.include_router(sdk_router)

@@ -22,7 +22,6 @@ _EXEMPT_PATHS = {
     "/auth/token",
     "/auth/refresh",
     # Self-service onboarding — no tenant exists yet when these are called
-    "/connect",
     "/onboard",
     "/onboard/verify-email",
     "/onboard/scan",
