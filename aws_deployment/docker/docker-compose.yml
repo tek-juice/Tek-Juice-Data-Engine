@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-=======
 # ============================================================
 # Tek Juice Data Engine — Docker Compose
 # All services communicate internally; app is exposed on 9600
@@ -87,4 +85,3 @@ volumes:
 networks:
   tek_juice_net:
     driver: bridge
->>>>>>> origin/main
