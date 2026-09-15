@@ -21,6 +21,9 @@ from shared.middleware.tenant import TenantContextMiddleware
 from services.api_gateway.routers.auth_router import router as auth_router
 from services.api_gateway.routers.proxy_router import router as proxy_router
 from services.api_gateway.routers.health_router import router as health_router
+from services.api_gateway.routers.connect_ui import router as connect_router
+from services.api_gateway.routers.onboard_router import router as onboard_router
+from services.api_gateway.routers.sdk_router import router as sdk_router
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
@@ -44,8 +47,8 @@ app = FastAPI(
     description="Central API Gateway — authentication, routing, rate limiting.",
     version=APP_VERSION,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if _settings.is_development else None,
+    redoc_url=None,
 )
 
 # ── Prometheus metrics endpoint ───────────────────────────────────────────────
@@ -70,5 +73,9 @@ register_exception_handlers(app)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health_router)
-app.include_router(auth_router, prefix=f"{API_PREFIX}/auth")
-app.include_router(proxy_router, prefix=API_PREFIX)
+app.include_router(auth_router,    prefix=f"{API_PREFIX}/auth")
+app.include_router(proxy_router,   prefix=API_PREFIX)
+# ── Self-service onboarding (no auth required) ────────────────────────────────
+app.include_router(connect_router)
+app.include_router(onboard_router)
+app.include_router(sdk_router)

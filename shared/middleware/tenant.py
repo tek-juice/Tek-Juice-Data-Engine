@@ -13,8 +13,24 @@ from configs.constants import TENANT_ID_HEADER
 
 logger = structlog.get_logger(__name__)
 
-# Paths that don't require tenant context (auth, health, docs)
-_EXEMPT_PATHS = {"/health", "/metrics", "/docs", "/openapi.json", "/auth/token", "/auth/refresh"}
+# Paths that don't require tenant context (auth, health, docs, onboarding)
+_EXEMPT_PATHS = {
+    "/health",
+    "/metrics",
+    "/docs",
+    "/openapi.json",
+    "/auth/token",
+    "/auth/refresh",
+    # Self-service onboarding — no tenant exists yet when these are called
+    "/connect",
+    "/onboard",
+    "/onboard/verify-email",
+    "/onboard/scan",
+    "/onboard/ping",
+    "/onboard/install",
+    "/sdk.js",
+    "/sdk/signal",
+}
 
 
 class TenantContextMiddleware(BaseHTTPMiddleware):

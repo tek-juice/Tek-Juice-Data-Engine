@@ -110,6 +110,13 @@ def write_gap_content(self, document_id: str, tenant_id: str) -> dict:
         # Dispatch embed task so new content is reflected in vector search
         embed_gap_drafts.delay(document_id, tenant_id)
 
+        # Dispatch injection task — push drafts into the connected product
+        from workers.celery.tasks.injection_tasks import inject_drafts_for_tenant
+        inject_drafts_for_tenant.apply_async(
+            kwargs={"tenant_id": tenant_id},
+            countdown=60,   # 60s delay — let embed_gap_drafts finish first
+        )
+
         # ── Fire drafts.ready webhook ─────────────────────────────────────────
         from workers.celery.tasks.webhook_tasks import deliver_webhook
         from services.webhooks.webhook_events import build_drafts_ready

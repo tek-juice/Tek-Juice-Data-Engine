@@ -25,6 +25,7 @@ celery_app = Celery(
         "workers.celery.tasks.sync_tasks",
         "workers.celery.tasks.aeo_tasks",
         "workers.celery.tasks.seo_tasks",
+        "workers.celery.tasks.injection_tasks",
     ],
 )
 
@@ -93,6 +94,13 @@ celery_app.conf.update(
         "crawl-tenant-websites-daily": {
             "task": "tasks.crawl_all_tenant_websites",
             "schedule": 86400,  # 24 hours — re-crawls every tenant's site daily
+        },
+        # ── Content injection — push written drafts into connected products ──────
+        # Runs on the same cadence as gap auto-close so published content
+        # follows immediately after drafts are written and embedded.
+        "inject-drafts-batch": {
+            "task":     "tasks.inject_drafts_batch",
+            "schedule": settings.gap_auto_close_interval_seconds,
         },
     },
 )

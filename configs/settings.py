@@ -302,10 +302,31 @@ class Settings(BaseSettings):
     geo_engine_port: int = 8013
     aeo_engine_port: int = 8014
 
-    # ── Rate Limiting 
+    # ── Rate Limiting
     rate_limit_standard: int = 100       # requests per minute
     rate_limit_premium: int = 1000
     rate_limit_window_seconds: int = 60
+
+    # ── Onboarding — Self-Service Product Connection ──────────────────────────
+    # SMTP credentials for sending verification and notification emails.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "Tek Juice Data Engine <noreply@tekjuice.co.ke>"
+    smtp_use_tls: bool = True
+
+    # AES-256 key used to encrypt injection credentials at rest.
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    # Must be exactly 64 hex characters (32 bytes).
+    credentials_encryption_key: str = ""
+
+    # Public base URL of this Data Engine instance — used in verification
+    # emails and in the connect wizard to show the correct engine address.
+    # This is the server where the Data Engine is deployed.
+    # Current production address: http://54.86.109.228:9600
+    # Override in .env: ENGINE_PUBLIC_URL=http://54.86.109.228:9600
+    engine_public_url: str = "http://54.86.109.228:9600"
 
     @property
     def is_production(self) -> bool:

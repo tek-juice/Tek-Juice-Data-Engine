@@ -19,6 +19,7 @@ from shared.middleware.request_id import RequestIDMiddleware
 from shared.middleware.logging import AccessLogMiddleware
 from shared.middleware.tenant import TenantContextMiddleware
 from services.dashboard_backend.analytics.analytics_router import router as analytics_router
+from services.dashboard_backend.analytics.visibility_router import router as visibility_router
 from services.dashboard_backend.metrics.metrics_router import router as metrics_router
 from services.dashboard_backend.websocket.ws_router import router as ws_router
 
@@ -59,9 +60,10 @@ app.add_middleware(
 
 register_exception_handlers(app)
 
-app.include_router(analytics_router, prefix=f"{API_PREFIX}/dashboard")
-app.include_router(metrics_router,   prefix=f"{API_PREFIX}/dashboard")
-app.include_router(ws_router,        prefix="/ws")
+app.include_router(analytics_router,  prefix=f"{API_PREFIX}/dashboard")
+app.include_router(visibility_router, prefix=f"{API_PREFIX}/dashboard")
+app.include_router(metrics_router,    prefix=f"{API_PREFIX}/dashboard")
+app.include_router(ws_router,         prefix="/ws")
 
 
 @app.get("/health")
