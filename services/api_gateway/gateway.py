@@ -42,12 +42,12 @@ async def lifespan(app: FastAPI):
 _settings = get_settings()
 
 app = FastAPI(
-    title=f"{APP_NAME} — API Gateway",
+    title="Tek Juice Data Engine — API Gateway",
     description="Central API Gateway — authentication, routing, rate limiting.",
     version=APP_VERSION,
     lifespan=lifespan,
-    docs_url="/docs" if _settings.is_development else None,
-    redoc_url=None,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # ── Prometheus metrics endpoint ───────────────────────────────────────────────
