@@ -159,7 +159,10 @@ class GapAnalyzer:
         _col = f"embedding_{_dims}"
         result = await self._session.execute(
             text(f"""
-                SELECT id, title, query, {_col} AS embedding
+                SELECT id,
+                       COALESCE(title, query, '') AS title,
+                       COALESCE(query, '') AS query,
+                       {_col} AS embedding
                 FROM scraped_trends
                 WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
