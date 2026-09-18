@@ -199,6 +199,11 @@ class GapAnalyzer:
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:
+        # asyncpg requires explicit array casting — pass as JSON then cast
+        import json as _json
+        missing   = result.missing_topics or []
+        recs      = result.recommendations or []
+        ref_ids   = [str(r) for r in (result.reference_trend_ids or [])]
         await self._session.execute(
             text("""
                 INSERT INTO gap_analysis_results
@@ -207,19 +212,26 @@ class GapAnalyzer:
                      before_coverage, metadata)
                 VALUES
                     (:document_id, :tenant_id, :gap_score, :severity,
-                     :missing_topics, :recommendations, :reference_ids,
-                     :before_coverage, :metadata::jsonb)
+                     CAST(:missing_topics AS TEXT[]),
+                     CAST(:recommendations AS TEXT[]),
+                     CAST(:reference_ids   AS UUID[]),
+                     :before_coverage, CAST(:metadata AS JSONB))
+                ON CONFLICT DO NOTHING
             """),
             {
-                "document_id":   result.document_id,
-                "tenant_id":     result.tenant_id,
-                "gap_score":     result.gap_score,
-                "severity":      result.severity,
-                "missing_topics": result.missing_topics,
-                "recommendations": result.recommendations,
-                "reference_ids": result.reference_trend_ids,
+                "document_id":    str(result.document_id),
+                "tenant_id":      str(result.tenant_id),
+                "gap_score":      float(result.gap_score),
+                "severity":       result.severity,
+                "missing_topics": "{" + ",".join(
+                    '"' + t.replace('"', '\"') + '"' for t in missing
+                ) + "}",
+                "recommendations": "{" + ",".join(
+                    '"' + r.replace('"', '\"') + '"' for r in recs
+                ) + "}",
+                "reference_ids":  "{" + ",".join(ref_ids) + "}",
                 "before_coverage": result.before_coverage,
-                "metadata":      json.dumps({"covered_topics": result.covered_topics}),
+                "metadata":       _json.dumps({"covered_topics": result.covered_topics or []}),
             },
         )
 
