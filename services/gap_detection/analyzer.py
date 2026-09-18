@@ -157,12 +157,11 @@ class GapAnalyzer:
         from configs.settings import get_settings as _get_settings
         _dims = _get_settings().embedding_dimension
         _col = f"embedding_{_dims}"
+        # Select only id + embedding — metadata columns (title, query) may not
+        # exist on older DB deployments so we avoid them in the SELECT.
         result = await self._session.execute(
             text(f"""
-                SELECT id,
-                       COALESCE(title, query, '') AS title,
-                       COALESCE(query, '') AS query,
-                       {_col} AS embedding
+                SELECT id, {_col} AS embedding
                 FROM scraped_trends
                 WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
@@ -172,7 +171,7 @@ class GapAnalyzer:
         )
         rows = result.fetchall()
         vectors = [list(row.embedding) for row in rows]
-        data = [{"id": row.id, "title": row.title, "query": row.query} for row in rows]
+        data = [{"id": str(row.id), "title": "", "query": ""} for row in rows]
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:
