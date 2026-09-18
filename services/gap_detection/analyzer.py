@@ -85,7 +85,13 @@ class GapAnalyzer:
 
         if not trend_vectors:
             logger.warning("gap_analysis_no_trend_vectors")
-            return self._empty_result(document_id, tenant_id)
+            empty = self._empty_result(document_id, tenant_id)
+            try:
+                await self._persist(empty)
+                await self._session.commit()
+            except Exception:
+                pass
+            return empty
 
         # Compute coverage
         before_coverage = self._comparator.average_coverage_score(
@@ -122,6 +128,12 @@ class GapAnalyzer:
         )
 
         await self._persist(result)
+        try:
+            await self._persist(result)
+            await self._session.commit()
+        except Exception as _persist_exc:
+            logger.warning("gap_persist_failed", error=str(_persist_exc))
+
         logger.info(
             "gap_analysis_complete",
             document_id=document_id,
