@@ -157,8 +157,20 @@ class GapAnalyzer:
         from configs.settings import get_settings as _get_settings
         _dims = _get_settings().embedding_dimension
         _col = f"embedding_{_dims}"
-        # Select only id + embedding — metadata columns (title, query) may not
-        # exist on older DB deployments so we avoid them in the SELECT.
+
+        # Check the column exists before querying — older deployments may be missing it
+        col_check = await self._session.execute(
+            text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'scraped_trends' AND column_name = :col
+                LIMIT 1
+            """),
+            {"col": _col},
+        )
+        if not col_check.fetchone():
+            logger.warning("trend_embedding_col_missing", column=_col)
+            return [], []
+
         result = await self._session.execute(
             text(f"""
                 SELECT id, {_col} AS embedding
