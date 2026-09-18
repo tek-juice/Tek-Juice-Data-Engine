@@ -199,39 +199,33 @@ class GapAnalyzer:
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:
-        # asyncpg requires explicit array casting — pass as JSON then cast
         import json as _json
-        missing   = result.missing_topics or []
-        recs      = result.recommendations or []
-        ref_ids   = [str(r) for r in (result.reference_trend_ids or [])]
+        # Live table schema: id(serial), tenant_id, document_id, created_at,
+        # gap_score, severity, before_coverage, after_coverage,
+        # missing_topics(jsonb), recommendations(jsonb), analysed_at
+        missing = result.missing_topics or []
+        recs    = result.recommendations or []
         await self._session.execute(
             text("""
                 INSERT INTO gap_analysis_results
-                    (document_id, tenant_id, gap_score, severity,
-                     missing_topics, recommendations, reference_doc_ids,
-                     before_coverage, metadata)
+                    (tenant_id, document_id, gap_score, severity,
+                     before_coverage, after_coverage,
+                     missing_topics, recommendations)
                 VALUES
-                    (:document_id, :tenant_id, :gap_score, :severity,
-                     CAST(:missing_topics AS TEXT[]),
-                     CAST(:recommendations AS TEXT[]),
-                     CAST(:reference_ids   AS UUID[]),
-                     :before_coverage, CAST(:metadata AS JSONB))
-                ON CONFLICT DO NOTHING
+                    (:tenant_id, :document_id, :gap_score, :severity,
+                     :before_coverage, :after_coverage,
+                     CAST(:missing_topics AS JSONB),
+                     CAST(:recommendations AS JSONB))
             """),
             {
-                "document_id":    str(result.document_id),
                 "tenant_id":      str(result.tenant_id),
+                "document_id":    str(result.document_id),
                 "gap_score":      float(result.gap_score),
-                "severity":       result.severity,
-                "missing_topics": "{" + ",".join(
-                    '"' + t.replace('"', '\"') + '"' for t in missing
-                ) + "}",
-                "recommendations": "{" + ",".join(
-                    '"' + r.replace('"', '\"') + '"' for r in recs
-                ) + "}",
-                "reference_ids":  "{" + ",".join(ref_ids) + "}",
+                "severity":       str(result.severity),
                 "before_coverage": result.before_coverage,
-                "metadata":       _json.dumps({"covered_topics": result.covered_topics or []}),
+                "after_coverage":  result.after_coverage,
+                "missing_topics":  _json.dumps(missing),
+                "recommendations": _json.dumps(recs),
             },
         )
 
