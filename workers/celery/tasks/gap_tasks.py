@@ -48,7 +48,7 @@ def run_gap_analysis(self, document_id: str, tenant_id: str) -> dict:
 
 @shared_task(name="tasks.run_gap_analysis_batch", bind=True)
 def run_gap_analysis_batch(self) -> dict:
-    """Scheduled: run gap analysis on all completed documents updated in the last 24h."""
+    """Scheduled: run gap analysis on all completed documents not yet analysed."""
     async def _run():
         from configs.database import AsyncSessionLocal
         from sqlalchemy import text
@@ -60,9 +60,9 @@ def run_gap_analysis_batch(self) -> dict:
                     FROM documents d
                     LEFT JOIN gap_analysis_results g ON g.document_id = d.id
                     WHERE d.status = 'completed'
-                      AND d.updated_at >= NOW() - INTERVAL '24 hours'
                       AND (g.id IS NULL OR g.analysed_at < NOW() - INTERVAL '6 hours')
-                    LIMIT 50
+                    ORDER BY d.created_at DESC
+                    LIMIT 100
                 """)
             )
             docs = result.fetchall()
