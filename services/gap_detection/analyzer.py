@@ -134,12 +134,16 @@ class GapAnalyzer:
     async def _load_document_vectors(
         self, document_id: str, tenant_id: str
     ) -> tuple[list[list[float]], list[str]]:
+        from configs.settings import get_settings as _get_settings
+        _dims = _get_settings().embedding_dimension
+        _col = f"embedding_{_dims}"
         result = await self._session.execute(
-            text("""
-                SELECT e.embedding, c.text
+            text(f"""
+                SELECT e.{_col} AS embedding, c.text
                 FROM embeddings e
                 JOIN chunks c ON c.id = e.chunk_id
                 WHERE e.document_id = :doc_id AND e.tenant_id = :tenant_id
+                  AND e.{_col} IS NOT NULL
                 LIMIT 500
             """),
             {"doc_id": document_id, "tenant_id": tenant_id},
