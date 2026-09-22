@@ -214,8 +214,7 @@ class GapAnalyzer:
                 VALUES
                     (:tenant_id, :document_id, :gap_score, :severity,
                      :before_coverage, :after_coverage,
-                     CAST(:missing_topics AS JSONB),
-                     CAST(:recommendations AS JSONB))
+                     :missing_topics, :recommendations)
             """),
             {
                 "tenant_id":      str(result.tenant_id),
