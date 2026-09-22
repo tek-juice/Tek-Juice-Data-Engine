@@ -94,6 +94,11 @@ async def dispatch_processing_pipeline(document_id: str, tenant_id: str) -> None
             # store_vectors intentionally receives the generate_embeddings result dict — NOT immutable.
             celery_app.signature("tasks.store_vectors"),
             celery_app.signature(
+                "tasks.run_gap_analysis",
+                args=[document_id, tenant_id],
+                immutable=True,
+            ),
+            celery_app.signature(
                 "tasks.notify_document_completed",
                 kwargs={"document_id": document_id, "tenant_id": tenant_id},
                 immutable=True,
