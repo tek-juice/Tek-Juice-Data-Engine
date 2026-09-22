@@ -195,7 +195,7 @@ class TelemetryMonitor:
                             INSERT INTO telemetry_events
                                 (tenant_id, event_type, service, payload, duration_ms, status)
                             VALUES
-                                (:tenant_id, :event_type, :service, :payload::jsonb,
+                                (:tenant_id, :event_type, :service, :payload,
                                  :duration_ms, :status)
                         """),
                         {

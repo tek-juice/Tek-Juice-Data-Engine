@@ -134,7 +134,7 @@ class TrendScraperScheduler:
                              raw_content, relevance_score, metadata)
                         VALUES
                             (:source, :query, :title, :url, :snippet, :published_at,
-                             :raw_content, :relevance_score, :metadata::jsonb)
+                             :raw_content, :relevance_score, :metadata)
                         ON CONFLICT DO NOTHING
                     """),
                     {

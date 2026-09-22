@@ -59,7 +59,7 @@ async def send_to_dead_letter(
                         (platform, source, query, raw_payload,
                          error_type, error_detail, api_status_code)
                     VALUES
-                        (:platform, :source, :query, :raw_payload::jsonb,
+                        (:platform, :source, :query, :raw_payload,
                          :error_type, :error_detail, :api_status_code)
                 """),
                 {

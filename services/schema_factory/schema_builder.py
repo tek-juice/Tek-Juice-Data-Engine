@@ -1161,7 +1161,7 @@ class SchemaBuilder:
                              content, metadata, is_active)
                         VALUES
                             (:document_id, :tenant_id, :schema_type, 'jsonld',
-                             :content::jsonb, :metadata::jsonb, TRUE)
+                             :content, :metadata, TRUE)
                         ON CONFLICT DO NOTHING
                     """),
                     {

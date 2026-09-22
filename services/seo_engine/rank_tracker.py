@@ -154,7 +154,7 @@ class RankTracker:
                              search_volume, cpc, competition, snapshot_date, raw_data)
                         VALUES
                             (:domain, :keyword, :location_code, :position, :url,
-                             :sv, :cpc, :comp, :snap_date, :raw::jsonb)
+                             :sv, :cpc, :comp, :snap_date, :raw)
                         ON CONFLICT (domain, keyword, location_code, snapshot_date)
                         DO UPDATE SET
                             position    = EXCLUDED.position,

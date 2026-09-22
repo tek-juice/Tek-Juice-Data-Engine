@@ -61,7 +61,7 @@ class PGVectorStore:
                         VALUES
                             (:chunk_id, :document_id, :tenant_id,
                              :embedding::vector, :provider, :model,
-                             :dimensions, :metadata::jsonb)
+                             :dimensions, :metadata)
                         ON CONFLICT (chunk_id) DO UPDATE SET
                             embedding  = EXCLUDED.embedding,
                             provider   = EXCLUDED.provider,

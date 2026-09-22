@@ -60,7 +60,7 @@ class BackgroundDocumentProcessor:
                         UPDATE documents
                         SET
                             language = :language,
-                            metadata = metadata || :metadata::jsonb
+                            metadata = metadata || :metadata
                         WHERE id = :id AND tenant_id = :tenant_id
                     """),
                     {

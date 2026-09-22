@@ -3,6 +3,7 @@ DATA ENGINE — Document Upload Handler
 Creates document DB records and dispatches Celery pipeline tasks.
 """
 
+import json
 import uuid
 import structlog
 from sqlalchemy import text
@@ -38,7 +39,7 @@ async def create_document_record(
                  file_size_bytes, mime_type, storage_path, metadata)
             VALUES
                 (:id, :tenant_id, :filename, :source_type, :status,
-                 :file_size_bytes, :mime_type, :storage_path, :metadata::jsonb)
+                 :file_size_bytes, :mime_type, :storage_path, :metadata)
         """),
         {
             "id": document_id,
@@ -49,7 +50,7 @@ async def create_document_record(
             "file_size_bytes": len(content),
             "mime_type": mime_type,
             "storage_path": storage_path,
-            "metadata": f'{{"fingerprint": "{document_fingerprint(filename, content)}"}}',
+            "metadata": json.dumps({"fingerprint": document_fingerprint(filename, content)}),
         },
     )
 

@@ -161,7 +161,7 @@ class AuthorityTracker:
                              top_anchors, snapshot_date, raw_data)
                         VALUES
                             (:domain, :dr, :tbl, :rd, :df, :nf, :spam,
-                             :new_bl, :lost_bl, :anchors::text[], :snap_date, :raw::jsonb)
+                             :new_bl, :lost_bl, :anchors, :snap_date, :raw)
                         ON CONFLICT (domain, snapshot_date)
                         DO UPDATE SET
                             domain_rank         = EXCLUDED.domain_rank,

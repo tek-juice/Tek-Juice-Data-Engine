@@ -142,7 +142,7 @@ class GapOptimiser:
                      missing_topics, close_plan, status, created_at)
                 VALUES
                     (:document_id, :tenant_id, :gap_score, :severity,
-                     :missing_topics, :close_plan::jsonb, 'pending', :now)
+                     :missing_topics, :close_plan, 'pending', :now)
                 ON CONFLICT (document_id, tenant_id)
                 DO UPDATE SET
                     gap_score      = EXCLUDED.gap_score,
@@ -243,7 +243,7 @@ class GapOptimiser:
                 SET metadata = jsonb_set(
                     COALESCE(metadata, '{}'),
                     '{expansion_priority}',
-                    :priority::jsonb
+                    to_jsonb(:priority::text)
                 )
                 WHERE id = :doc_id AND tenant_id = :tenant_id
             """),

@@ -253,7 +253,7 @@ def install_ssh_bridge(self, tenant_id: str, platform: str, creds: dict) -> dict
                     text("""
                         UPDATE tenants
                         SET injection_credentials   = :creds,
-                            injection_config        = :config::jsonb,
+                            injection_config        = :config,
                             injection_status        = 'live',
                             platform_type           = :platform,
                             onboarding_completed_at = NOW()

@@ -162,7 +162,7 @@ async def submit_onboard(
                  email_verified, verification_token, injection_status, metadata)
             VALUES
                 (:id, :name, :slug, 'standard', true, :website_url,
-                 false, :token, 'pending', :meta::jsonb)
+                 false, :token, 'pending', :meta)
         """),
         {
             "id":          tenant_id,
@@ -462,7 +462,7 @@ async def install_bridge(
         text("""
             UPDATE tenants
             SET injection_credentials   = :creds,
-                injection_config        = :config::jsonb,
+                injection_config        = :config,
                 injection_status        = 'live',
                 platform_type           = :platform,
                 onboarding_completed_at = NOW()
