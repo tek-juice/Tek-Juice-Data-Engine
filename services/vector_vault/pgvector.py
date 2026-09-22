@@ -53,14 +53,18 @@ class PGVectorStore:
 
             inserted = 0
             for record in records:
+                # asyncpg does not support :param::type cast syntax.
+                # Embed the vector literal directly in the SQL string so
+                # pgvector receives it as a properly typed value.
+                embedding_str = str(record.embedding)
                 await self._session.execute(
-                    text("""
+                    text(f"""
                         INSERT INTO embeddings
                             (chunk_id, document_id, tenant_id, embedding,
                              provider, model, dimensions, metadata)
                         VALUES
                             (:chunk_id, :document_id, :tenant_id,
-                             :embedding::vector, :provider, :model,
+                             '{embedding_str}'::vector, :provider, :model,
                              :dimensions, :metadata)
                         ON CONFLICT (chunk_id) DO UPDATE SET
                             embedding  = EXCLUDED.embedding,
@@ -72,7 +76,6 @@ class PGVectorStore:
                         "chunk_id":    record.chunk_id,
                         "document_id": record.document_id,
                         "tenant_id":   record.tenant_id,
-                        "embedding":   str(record.embedding),
                         "provider":    record.provider,
                         "model":       record.model,
                         "dimensions":  record.dimensions,
