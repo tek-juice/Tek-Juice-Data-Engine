@@ -199,10 +199,8 @@ class GapAnalyzer:
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:
-        import json as _json
-        # Live table schema: id(serial), tenant_id, document_id, created_at,
-        # gap_score, severity, before_coverage, after_coverage,
-        # missing_topics(jsonb), recommendations(jsonb), analysed_at
+        # missing_topics and recommendations are TEXT[] — pass Python lists directly;
+        # asyncpg maps list[str] → text[] automatically.
         missing = result.missing_topics or []
         recs    = result.recommendations or []
         await self._session.execute(
@@ -217,14 +215,14 @@ class GapAnalyzer:
                      :missing_topics, :recommendations)
             """),
             {
-                "tenant_id":      str(result.tenant_id),
-                "document_id":    str(result.document_id),
-                "gap_score":      float(result.gap_score),
-                "severity":       str(result.severity),
+                "tenant_id":       str(result.tenant_id),
+                "document_id":     str(result.document_id),
+                "gap_score":       float(result.gap_score),
+                "severity":        str(result.severity),
                 "before_coverage": result.before_coverage,
                 "after_coverage":  result.after_coverage,
-                "missing_topics":  _json.dumps(missing),
-                "recommendations": _json.dumps(recs),
+                "missing_topics":  missing,
+                "recommendations": recs,
             },
         )
 
