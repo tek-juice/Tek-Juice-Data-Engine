@@ -18,13 +18,17 @@ class GeminiEmbeddingProvider:
     """Async-compatible Google Gemini embedding provider."""
 
     SUPPORTED_MODELS = {
-        "embedding-001": 768,
-        "text-embedding-004": 768,
+        "embedding-001":       768,
+        "text-embedding-004":  768,
+        # gemini-embedding-001 natively outputs 3072 dims but supports
+        # output_dimensionality truncation; we request 768 to match the DB column.
+        "gemini-embedding-001": 768,
+        "text-embedding-005":  768,
     }
 
     def __init__(self, model: str | None = None) -> None:
         # Strip the "models/" prefix that settings stores for API routing purposes —
-        # SUPPORTED_MODELS keys use bare names ("text-embedding-004").
+        # SUPPORTED_MODELS keys use bare names ("gemini-embedding-001").
         raw = model or settings.default_embedding_model
         self.model = raw.removeprefix("models/")
         self.dimensions = self.SUPPORTED_MODELS.get(self.model, 768)
@@ -42,6 +46,7 @@ class GeminiEmbeddingProvider:
                     model=f"models/{self.model}",
                     content=text,
                     task_type="retrieval_document",
+                    output_dimensionality=self.dimensions,
                 )
                 embeddings.append(result["embedding"])
 
