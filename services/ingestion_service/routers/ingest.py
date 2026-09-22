@@ -3,6 +3,7 @@ DATA ENGINE — Ingestion Router
 Handles document upload, status queries, deletion, and automated website crawl.
 """
 
+import json
 import uuid
 
 import structlog
@@ -178,21 +179,25 @@ async def register_and_crawl(
     """
     url_str = str(body.website_url).rstrip("/")
 
-    # Persist URL + crawl config on the tenant
+    # Persist URL + crawl config on the tenant.
+    # asyncpg does not support the ::jsonb cast syntax inside named-param queries;
+    # pass the JSON as a plain string — Postgres will coerce it to jsonb automatically.
     await db.execute(
         text("""
             UPDATE tenants
             SET website_url  = :url,
-                crawl_config = :config::jsonb,
+                crawl_config = :config,
                 updated_at   = NOW()
             WHERE id = :tenant_id
         """),
         {
-            "url":       url_str,
-            "config":    f'{{"max_pages": {body.max_pages}, '
-                         f'"max_depth": {body.max_depth}, '
-                         f'"recrawl_interval_hours": {body.recrawl_interval_hours}}}',
-            "tenant_id": current_user.tenant_id,
+            "url": url_str,
+            "config": json.dumps({
+                "max_pages":              body.max_pages,
+                "max_depth":              body.max_depth,
+                "recrawl_interval_hours": body.recrawl_interval_hours,
+            }),
+            "tenant_id": str(current_user.tenant_id),
         },
     )
     await db.commit()
