@@ -217,8 +217,9 @@ def crawl_and_ingest_website(self, tenant_id: str) -> dict:
                 # Encode page text as bytes so create_document_record can store it
                 page_content = page.text.encode("utf-8")
                 # Use normalised URL path as filename so re-crawls update the same logical page
-                url_path  = urlparse(page_url_norm).path.strip("/").replace("/", "_") or "home"
-                filename  = url_path[:180] + ".html"
+                url_path  = urlparse(page_url_norm).path.strip("/").replace("/", "_")
+                # Root path "/" must not collide with "/home" — use "index" for root
+                filename  = (url_path or "index")[:180] + ".html"
 
                 async with AsyncSessionLocal() as session:
                     # Skip if this URL was already ingested for this tenant
