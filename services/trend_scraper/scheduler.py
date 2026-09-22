@@ -123,10 +123,23 @@ class TrendScraperScheduler:
             return
         from configs.database import AsyncSessionLocal
         from sqlalchemy import text
+        from datetime import datetime
         import json
 
         async with AsyncSessionLocal() as session:
             for item in items:
+                # asyncpg requires datetime objects for TIMESTAMPTZ — parse ISO strings
+                published_at_raw = item.get("published_at")
+                if isinstance(published_at_raw, str):
+                    try:
+                        published_at = datetime.fromisoformat(
+                            published_at_raw.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        published_at = None
+                else:
+                    published_at = published_at_raw
+
                 await session.execute(
                     text("""
                         INSERT INTO scraped_trends
@@ -143,7 +156,7 @@ class TrendScraperScheduler:
                         "title":           item.get("title"),
                         "url":             item.get("url"),
                         "snippet":         item.get("snippet"),
-                        "published_at":    item.get("published_at"),
+                        "published_at":    published_at,
                         "raw_content":     item.get("raw_content"),
                         "relevance_score": item.get("relevance_score", 1.0),
                         "metadata":        json.dumps(item.get("metadata", {})),
