@@ -202,9 +202,16 @@ async def register_and_crawl(
     )
     await db.commit()
 
-    # Trigger first crawl immediately
-    from workers.celery.tasks.ingestion_tasks import crawl_and_ingest_website
-    crawl_and_ingest_website.delay(str(current_user.tenant_id))
+    # Trigger first crawl immediately.
+    # The workers module lives in the celery container, not here — use send_task()
+    # to dispatch by registered task name over the broker (no local import needed).
+    import os as _os
+    from celery import Celery as _Celery
+    _celery = _Celery(broker=_os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0"))
+    _celery.send_task(
+        "tasks.crawl_and_ingest_website",
+        args=[str(current_user.tenant_id)],
+    )
 
     logger.info(
         "website_crawl_registered",
