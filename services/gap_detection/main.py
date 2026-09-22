@@ -171,12 +171,17 @@ async def analyze_gaps(
             document_id=request.document_id,
             tenant_id=request.tenant_id,
         )
-        recommendations = _recommender.generate(
+        raw_recs = _recommender.generate(
             missing_topics=result.missing_topics,
             covered_topics=result.covered_topics,
             gap_score=result.gap_score,
             severity=result.severity,
         )
+        # RecommendationEngine returns Recommendation objects — serialize to str
+        recommendations = [
+            r.description if hasattr(r, 'description') else str(r)
+            for r in (raw_recs or [])
+        ]
         return GapResult(
             gap_score=result.gap_score,
             severity=result.severity,
@@ -335,11 +340,17 @@ async def trigger_auto_close(
         optimiser = GapOptimiser(session)
         actions   = await optimiser.optimise(result)
         await session.commit()
+        raw_actions = actions.get("actions", [])
+        # Serialize action objects to strings if needed
+        str_actions = [
+            a.description if hasattr(a, 'description') else str(a)
+            for a in raw_actions
+        ] if raw_actions else []
         return {
             "document_id":      document_id,
             "gap_score":        result.gap_score,
             "severity":         result.severity,
-            "actions":          actions.get("actions", []),
+            "actions":          str_actions,
             "clusters_created": actions.get("close_plan_clusters", 0),
             "estimated_words":  actions.get("close_plan_words", 0),
         }

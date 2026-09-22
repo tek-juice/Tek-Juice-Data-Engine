@@ -35,6 +35,8 @@ SERVICE_BASE_URLS = {
     "semantic":   _svc_url("semantic_engine",     settings.semantic_engine_port),
     "gaps":       _svc_url("gap_detection",       settings.gap_detection_port),
     "schema":     _svc_url("schema_factory",      settings.schema_factory_port),
+    # "schemas" alias — schema_factory exposes /api/v1/schemas/... routes
+    "schemas":    _svc_url("schema_factory",      settings.schema_factory_port),
     "dashboard":  _svc_url("dashboard_backend",   settings.dashboard_backend_port),
     "seo":        _svc_url("seo_engine",          settings.seo_engine_port),
     "geo":        _svc_url("geo_engine",          settings.geo_engine_port),

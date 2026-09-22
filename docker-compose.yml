@@ -38,6 +38,7 @@ x-docker-env: &docker-env
   SERVICE_HOST_SEO_ENGINE: seo_engine
   SERVICE_HOST_GEO_ENGINE: geo_engine
   SERVICE_HOST_AEO_ENGINE: aeo_engine
+  SERVICE_HOST_SYNCHRONIZATION: synchronization
 
 networks:
   data_engine_net:

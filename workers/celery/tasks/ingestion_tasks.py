@@ -5,6 +5,7 @@ These tasks are chained sequentially per document via Celery Canvas.
 """
 
 import structlog
+from urllib.parse import urlparse
 from celery import shared_task
 from configs.constants import DocumentStatus
 
@@ -199,21 +200,43 @@ def crawl_and_ingest_website(self, tenant_id: str) -> dict:
         ingested = 0
         failed   = 0
 
+        seen_urls: set[str] = set()
+
         async for page in crawler.crawl(website_url):
             if not page.text or len(page.text.strip()) < 100:
                 continue  # skip near-empty pages (nav-only, 404s, etc.)
+
+            # Normalise URL for dedup
+            page_url_norm = page.url.split("#")[0].rstrip("/")
+            if page_url_norm in seen_urls:
+                logger.info("page_skipped_duplicate_url", url=page.url)
+                continue
+            seen_urls.add(page_url_norm)
+
             try:
                 # Encode page text as bytes so create_document_record can store it
-                content   = page.text.encode("utf-8")
-                filename  = (page.title or page.url.split("/")[-1] or "page").strip()[:200] + ".html"
+                page_content = page.text.encode("utf-8")
+                # Use normalised URL path as filename so re-crawls update the same logical page
+                url_path  = urlparse(page_url_norm).path.strip("/").replace("/", "_") or "home"
+                filename  = url_path[:180] + ".html"
 
                 async with AsyncSessionLocal() as session:
+                    # Skip if this URL was already ingested for this tenant
+                    existing = await session.execute(
+                        text("SELECT id FROM documents WHERE tenant_id = :tid AND filename = :fn AND status != 'failed' LIMIT 1"),
+                        {"tid": tenant_id, "fn": filename},
+                    )
+                    if existing.fetchone():
+                        logger.info("page_skipped_already_ingested", tenant_id=tenant_id, url=page.url)
+                        ingested += 1  # count as done
+                        continue
+
                     doc = await create_document_record(
                         db=session,
                         tenant_id=tenant_id,
                         filename=filename,
                         source_type="html",
-                        content=content,
+                        content=page_content,
                         mime_type="text/html",
                     )
                     doc_id = str(doc.id)

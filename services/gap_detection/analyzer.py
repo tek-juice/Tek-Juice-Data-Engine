@@ -85,7 +85,13 @@ class GapAnalyzer:
 
         if not trend_vectors:
             logger.warning("gap_analysis_no_trend_vectors")
-            return self._empty_result(document_id, tenant_id)
+            empty = self._empty_result(document_id, tenant_id)
+            try:
+                await self._persist(empty)
+                await self._session.commit()
+            except Exception:
+                pass
+            return empty
 
         # Compute coverage
         before_coverage = self._comparator.average_coverage_score(
@@ -122,6 +128,12 @@ class GapAnalyzer:
         )
 
         await self._persist(result)
+        try:
+            await self._persist(result)
+            await self._session.commit()
+        except Exception as _persist_exc:
+            logger.warning("gap_persist_failed", error=str(_persist_exc))
+
         logger.info(
             "gap_analysis_complete",
             document_id=document_id,
@@ -134,12 +146,16 @@ class GapAnalyzer:
     async def _load_document_vectors(
         self, document_id: str, tenant_id: str
     ) -> tuple[list[list[float]], list[str]]:
+        from configs.settings import get_settings as _get_settings
+        _dims = _get_settings().embedding_dimension
+        _col = f"embedding_{_dims}"
         result = await self._session.execute(
-            text("""
-                SELECT e.embedding, c.text
+            text(f"""
+                SELECT e.{_col} AS embedding, c.text
                 FROM embeddings e
                 JOIN chunks c ON c.id = e.chunk_id
                 WHERE e.document_id = :doc_id AND e.tenant_id = :tenant_id
+                  AND e.{_col} IS NOT NULL
                 LIMIT 500
             """),
             {"doc_id": document_id, "tenant_id": tenant_id},
@@ -153,9 +169,23 @@ class GapAnalyzer:
         from configs.settings import get_settings as _get_settings
         _dims = _get_settings().embedding_dimension
         _col = f"embedding_{_dims}"
+
+        # Check the column exists before querying — older deployments may be missing it
+        col_check = await self._session.execute(
+            text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'scraped_trends' AND column_name = :col
+                LIMIT 1
+            """),
+            {"col": _col},
+        )
+        if not col_check.fetchone():
+            logger.warning("trend_embedding_col_missing", column=_col)
+            return [], []
+
         result = await self._session.execute(
             text(f"""
-                SELECT id, title, query, {_col} AS embedding
+                SELECT id, {_col} AS embedding
                 FROM scraped_trends
                 WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
@@ -165,31 +195,37 @@ class GapAnalyzer:
         )
         rows = result.fetchall()
         vectors = [list(row.embedding) for row in rows]
-        data = [{"id": row.id, "title": row.title, "query": row.query} for row in rows]
+        data = [{"id": str(row.id), "title": "", "query": ""} for row in rows]
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:
+        import json as _json
+        # Live table schema: id(serial), tenant_id, document_id, created_at,
+        # gap_score, severity, before_coverage, after_coverage,
+        # missing_topics(jsonb), recommendations(jsonb), analysed_at
+        missing = result.missing_topics or []
+        recs    = result.recommendations or []
         await self._session.execute(
             text("""
                 INSERT INTO gap_analysis_results
-                    (document_id, tenant_id, gap_score, severity,
-                     missing_topics, recommendations, reference_doc_ids,
-                     before_coverage, metadata)
+                    (tenant_id, document_id, gap_score, severity,
+                     before_coverage, after_coverage,
+                     missing_topics, recommendations)
                 VALUES
-                    (:document_id, :tenant_id, :gap_score, :severity,
-                     :missing_topics, :recommendations, :reference_ids,
-                     :before_coverage, :metadata::jsonb)
+                    (:tenant_id, :document_id, :gap_score, :severity,
+                     :before_coverage, :after_coverage,
+                     CAST(:missing_topics AS JSONB),
+                     CAST(:recommendations AS JSONB))
             """),
             {
-                "document_id":   result.document_id,
-                "tenant_id":     result.tenant_id,
-                "gap_score":     result.gap_score,
-                "severity":      result.severity,
-                "missing_topics": result.missing_topics,
-                "recommendations": result.recommendations,
-                "reference_ids": result.reference_trend_ids,
+                "tenant_id":      str(result.tenant_id),
+                "document_id":    str(result.document_id),
+                "gap_score":      float(result.gap_score),
+                "severity":       str(result.severity),
                 "before_coverage": result.before_coverage,
-                "metadata":      json.dumps({"covered_topics": result.covered_topics}),
+                "after_coverage":  result.after_coverage,
+                "missing_topics":  _json.dumps(missing),
+                "recommendations": _json.dumps(recs),
             },
         )
 
