@@ -195,10 +195,11 @@ async def register_and_crawl(
             "tenant_id": current_user.tenant_id,
         },
     )
+    await db.commit()
 
     # Trigger first crawl immediately
     from workers.celery.tasks.ingestion_tasks import crawl_and_ingest_website
-    crawl_and_ingest_website.delay(current_user.tenant_id)
+    crawl_and_ingest_website.delay(str(current_user.tenant_id))
 
     logger.info(
         "website_crawl_registered",
