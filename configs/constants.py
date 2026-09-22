@@ -54,7 +54,9 @@ EMBEDDING_MODELS: dict[str, dict[str, int]] = {
     },
     EmbeddingProvider.GEMINI: {
         "embedding-001": 768,
+        "gemini-embedding-001": 768,
         "text-embedding-004": 768,
+        "text-embedding-005": 768,
     },
     EmbeddingProvider.VOYAGE: {
         "voyage-large-2": 1536,
