@@ -239,6 +239,7 @@ def crawl_and_ingest_website(self, tenant_id: str) -> dict:
                         content=page_content,
                         mime_type="text/html",
                     )
+                    await session.commit()  # must commit before closing so the row is visible to workers
                     doc_id = str(doc.id)
 
                 await dispatch_processing_pipeline(
