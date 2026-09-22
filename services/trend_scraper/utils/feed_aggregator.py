@@ -594,8 +594,8 @@ class PublicFeedAggregator:
         feeds = [
             # Google News RSS — surfaces articles shared heavily on Facebook
             f"https://news.google.com/rss/search?q={query_encoded}&hl=en-US&gl=US&ceid=US:en",
-            # Bing News RSS
-            f"https://www.bing.com/news/search?q={query_encoded}&format=RSS",
+            # Bing News RSS — corrected URL (Bing dropped bare &format=RSS)
+            f"https://www.bing.com/news/search?q={query_encoded}&setmkt=en-US&cc=US&format=rss",
         ]
 
         async with httpx.AsyncClient(timeout=20, headers=get_random_headers(),

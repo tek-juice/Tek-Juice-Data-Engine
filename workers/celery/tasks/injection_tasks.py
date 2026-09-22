@@ -266,10 +266,20 @@ def install_ssh_bridge(self, tenant_id: str, platform: str, creds: dict) -> dict
                         "id":       tenant_id,
                     },
                 )
-                # Fire first crawl
+                # Fire first crawl — only if the tenant already has a website_url saved.
+                # If the user hasn't called POST /ingest/crawl yet, website_url is NULL
+                # and crawl_and_ingest_website would immediately skip with "no_website_url".
+                # The crawl will fire automatically once the user registers their URL via
+                # POST /ingest/crawl, so we avoid the silent no-op here.
                 try:
-                    from workers.celery.tasks.ingestion_tasks import crawl_and_ingest_website
-                    crawl_and_ingest_website.delay(tenant_id)
+                    url_row = await session.execute(
+                        text("SELECT website_url FROM tenants WHERE id = :id"),
+                        {"id": tenant_id},
+                    )
+                    url_record = url_row.fetchone()
+                    if url_record and url_record.website_url:
+                        from workers.celery.tasks.ingestion_tasks import crawl_and_ingest_website
+                        crawl_and_ingest_website.delay(tenant_id)
                 except Exception:
                     pass
             else:

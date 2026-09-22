@@ -56,7 +56,10 @@ celery_app.conf.update(
         "scrape-trends-hourly": {
             "task": "tasks.scrape_trends",
             "schedule": settings.scraper_interval_seconds,
-            "kwargs": {"sources": ["google", "bing", "news", "social_media"]},
+            # "indirect" needs no API keys — Google Trends autocomplete, Reddit public JSON,
+            # HN, YouTube RSS, GitHub trending, etc. Always produces results even when
+            # SCRAPER_API_KEY / BING_SEARCH_API_KEY are not configured.
+            "kwargs": {"sources": ["google", "bing", "news", "social_media", "indirect"]},
         },
         "embed-scraped-trends-2h": {
             "task": "tasks.embed_scraped_trends",
@@ -101,6 +104,18 @@ celery_app.conf.update(
         "inject-drafts-batch": {
             "task":     "tasks.inject_drafts_batch",
             "schedule": settings.gap_auto_close_interval_seconds,
+        },
+        # ── Telemetry — previously defined only in dead cron_schedule.py ─────────
+        # These two tasks never fired before. Now registered here so Beat runs them.
+        "flush-telemetry-30s": {
+            "task":     "tasks.flush_telemetry_buffer",
+            "schedule": 30,
+            "options":  {"queue": "telemetry"},
+        },
+        "service-health-check-1m": {
+            "task":     "tasks.service_health_check",
+            "schedule": 60,
+            "options":  {"queue": "telemetry"},
         },
     },
 )
