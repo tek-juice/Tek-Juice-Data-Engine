@@ -365,8 +365,10 @@ class PublicFeedAggregator:
                     r'<p class="col-9[^"]*"[^>]*>\s*(.*?)\s*</p>', html, re.DOTALL
                 )
                 for i, (path, name_raw) in enumerate(repos[:limit]):
-                    name    = re.sub(r"\s+", " ", name_raw).strip()
-                    desc    = re.sub(r"\s+", " ", descs[i]).strip() if i < len(descs) else ""
+                    # Strip any nested HTML tags (e.g. SVG icons inside the <a>)
+                    name = re.sub(r"<[^>]+>", "", name_raw)
+                    name = re.sub(r"\s+", " ", name).strip()
+                    desc = re.sub(r"\s+", " ", descs[i]).strip() if i < len(descs) else ""
                     repo_url = f"https://github.com{path.strip()}"
                     if name:
                         results.append(_item(
