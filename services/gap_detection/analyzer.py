@@ -127,7 +127,6 @@ class GapAnalyzer:
             reference_trend_ids=reference_ids[:50],
         )
 
-        await self._persist(result)
         try:
             await self._persist(result)
             await self._session.commit()
@@ -185,7 +184,7 @@ class GapAnalyzer:
 
         result = await self._session.execute(
             text(f"""
-                SELECT id, {_col} AS embedding
+                SELECT id, title, query, {_col} AS embedding
                 FROM scraped_trends
                 WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
@@ -195,7 +194,14 @@ class GapAnalyzer:
         )
         rows = result.fetchall()
         vectors = [list(row.embedding) for row in rows]
-        data = [{"id": str(row.id), "title": "", "query": ""} for row in rows]
+        data = [
+            {
+                "id":    str(row.id),
+                "title": row.title or "",
+                "query": row.query or "",
+            }
+            for row in rows
+        ]
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:

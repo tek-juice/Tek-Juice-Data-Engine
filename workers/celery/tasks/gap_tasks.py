@@ -58,9 +58,22 @@ def run_gap_analysis_batch(self) -> dict:
                 text("""
                     SELECT d.id, d.tenant_id
                     FROM documents d
-                    LEFT JOIN gap_analysis_results g ON g.document_id = d.id
                     WHERE d.status = 'completed'
-                      AND (g.id IS NULL OR g.analysed_at < NOW() - INTERVAL '6 hours')
+                      AND (
+                        -- Never analysed
+                        NOT EXISTS (
+                            SELECT 1 FROM gap_analysis_results g
+                            WHERE g.document_id = d.id
+                        )
+                        OR
+                        -- Analysed but new trends have been scraped since last analysis
+                        EXISTS (
+                            SELECT 1 FROM scraped_trends t
+                            JOIN gap_analysis_results g ON g.document_id = d.id
+                            WHERE t.scraped_at > g.analysed_at
+                              AND t.embedding_768 IS NOT NULL
+                        )
+                      )
                     ORDER BY d.created_at DESC
                     LIMIT 100
                 """)
