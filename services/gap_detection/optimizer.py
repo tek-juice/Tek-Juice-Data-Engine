@@ -159,7 +159,7 @@ class GapOptimiser:
                 "severity":       result.severity,
                 "missing_topics": result.missing_topics,
                 "close_plan":     close_plan_json,
-                "now":            datetime.now(UTC).isoformat(),
+                "now":            datetime.now(UTC),
             },
         )
 

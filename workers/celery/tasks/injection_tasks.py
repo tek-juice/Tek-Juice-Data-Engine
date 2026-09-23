@@ -243,7 +243,7 @@ def install_ssh_bridge(self, tenant_id: str, platform: str, creds: dict) -> dict
                 encrypted = encrypt_credentials(creds)
                 config = {
                     "platform":     platform,
-                    "installed_at": datetime.now(UTC).isoformat(),
+                    "installed_at": datetime.now(UTC),
                     "details":      {
                         k: v for k, v in result.items()
                         if k != "success" and isinstance(v, (str, int, float, bool, type(None)))

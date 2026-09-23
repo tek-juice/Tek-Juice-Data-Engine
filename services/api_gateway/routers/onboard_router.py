@@ -451,7 +451,7 @@ async def install_bridge(
     encrypted        = encrypt_credentials(creds)
     injection_config = {
         "platform":     body.platform,
-        "installed_at": datetime.now(UTC).isoformat(),
+        "installed_at": datetime.now(UTC),
         "details": {
             k: v for k, v in test_result.items()
             if k != "success" and isinstance(v, (str, int, float, bool, type(None)))
