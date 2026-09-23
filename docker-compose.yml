@@ -481,7 +481,10 @@ services:
     environment:
       <<: *docker-env
     # --schedule points to a tmpfs path the non-root appuser can write to.
-    command: celery -A workers.celery.app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    command: >
+      celery -A workers.celery.app beat --loglevel=info
+      --schedule=/tmp/celerybeat-schedule
+      --pidfile=/tmp/celerybeat.pid
     depends_on:
       redis:
         condition: service_healthy
