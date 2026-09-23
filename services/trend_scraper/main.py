@@ -282,7 +282,7 @@ async def dead_letter_queue(
                 SELECT id, platform, source, query, error_type,
                        error_detail, retry_count, resolved, created_at
                 FROM scraper_dead_letter_queue
-                WHERE (:platform IS NULL OR platform = :platform)
+                WHERE (cast(:platform as text) IS NULL OR platform = :platform)
                   AND resolved = FALSE
                 ORDER BY created_at DESC
                 LIMIT :lim

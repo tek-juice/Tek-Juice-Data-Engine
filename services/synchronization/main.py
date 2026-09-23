@@ -101,11 +101,7 @@ _cache = CacheManager()
 async def trigger_sync(request: SyncRequest = Body(...)):
     """Trigger a synchronization run for the specified type and resource."""
     try:
-        result = await _sync.run(
-            sync_type=request.sync_type,
-            tenant_id=request.tenant_id,
-            resource=request.resource,
-        )
+        result = await _sync.run_full_sync()
         return {"status": "completed", "synced": result}
     except Exception as exc:
         logger.error("sync_failed", error=str(exc))

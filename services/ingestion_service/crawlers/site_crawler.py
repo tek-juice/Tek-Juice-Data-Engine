@@ -144,7 +144,7 @@ class SiteCrawler:
             # Fetch page
             try:
                 logger.info("crawling_page", url=url, depth=depth, total=pages_crawled)
-                content = await self._scraper.fetch(url)
+                content = await self._scraper.fetch(url, force_headless=True)
                 pages_crawled += 1
                 yield content
 
