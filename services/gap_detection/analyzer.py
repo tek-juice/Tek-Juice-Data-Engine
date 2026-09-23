@@ -142,6 +142,19 @@ class GapAnalyzer:
         )
         return result
 
+    @staticmethod
+    def _parse_vector(raw) -> list[float]:
+        """
+        asyncpg returns pgvector columns as strings like '[0.1,0.2,...]'
+        when the pgvector codec isn't registered. Parse them to list[float].
+        """
+        if isinstance(raw, list):
+            return [float(x) for x in raw]
+        if isinstance(raw, str):
+            return [float(x) for x in raw.strip("[]").split(",") if x.strip()]
+        # Already a sequence (numpy array, etc.)
+        return [float(x) for x in raw]
+
     async def _load_document_vectors(
         self, document_id: str, tenant_id: str
     ) -> tuple[list[list[float]], list[str]]:
@@ -150,7 +163,7 @@ class GapAnalyzer:
         _col = f"embedding_{_dims}"
         result = await self._session.execute(
             text(f"""
-                SELECT e.{_col} AS embedding, c.text
+                SELECT e.{_col}::text AS embedding, c.text
                 FROM embeddings e
                 JOIN chunks c ON c.id = e.chunk_id
                 WHERE e.document_id = :doc_id AND e.tenant_id = :tenant_id
@@ -160,7 +173,7 @@ class GapAnalyzer:
             {"doc_id": document_id, "tenant_id": tenant_id},
         )
         rows = result.fetchall()
-        vectors = [list(row.embedding) for row in rows]
+        vectors = [self._parse_vector(row.embedding) for row in rows]
         texts = [row.text for row in rows]
         return vectors, texts
 
@@ -184,7 +197,7 @@ class GapAnalyzer:
 
         result = await self._session.execute(
             text(f"""
-                SELECT id, title, query, {_col} AS embedding
+                SELECT id, title, query, {_col}::text AS embedding
                 FROM scraped_trends
                 WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
@@ -193,7 +206,7 @@ class GapAnalyzer:
             """)
         )
         rows = result.fetchall()
-        vectors = [list(row.embedding) for row in rows]
+        vectors = [self._parse_vector(row.embedding) for row in rows]
         data = [
             {
                 "id":    str(row.id),
