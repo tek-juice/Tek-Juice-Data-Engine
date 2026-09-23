@@ -205,10 +205,28 @@ class GapAnalyzer:
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:
-        # missing_topics and recommendations are TEXT[] — pass Python lists directly;
-        # asyncpg maps list[str] → text[] automatically.
+        import json as _json
         missing = result.missing_topics or []
         recs    = result.recommendations or []
+
+        # Detect whether missing_topics is TEXT[] or JSONB on the live DB
+        col_type_row = await self._session.execute(
+            text("""
+                SELECT data_type FROM information_schema.columns
+                WHERE table_name = 'gap_analysis_results'
+                  AND column_name = 'missing_topics'
+                LIMIT 1
+            """)
+        )
+        col_type = (col_type_row.scalar() or "").lower()
+        # JSONB columns need json-serialised strings; TEXT[] columns take Python lists
+        if "json" in col_type:
+            missing_val = _json.dumps(missing)
+            recs_val    = _json.dumps(recs)
+        else:
+            missing_val = missing
+            recs_val    = recs
+
         await self._session.execute(
             text("""
                 INSERT INTO gap_analysis_results
@@ -219,6 +237,7 @@ class GapAnalyzer:
                     (:tenant_id, :document_id, :gap_score, :severity,
                      :before_coverage, :after_coverage,
                      :missing_topics, :recommendations)
+                ON CONFLICT DO NOTHING
             """),
             {
                 "tenant_id":       str(result.tenant_id),
@@ -227,8 +246,8 @@ class GapAnalyzer:
                 "severity":        str(result.severity),
                 "before_coverage": result.before_coverage,
                 "after_coverage":  result.after_coverage,
-                "missing_topics":  missing,
-                "recommendations": recs,
+                "missing_topics":  missing_val,
+                "recommendations": recs_val,
             },
         )
 

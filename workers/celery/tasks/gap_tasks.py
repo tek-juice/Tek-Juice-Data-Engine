@@ -53,9 +53,13 @@ def run_gap_analysis_batch(self) -> dict:
         from configs.database import AsyncSessionLocal
         from sqlalchemy import text
 
+        from configs.settings import get_settings as _gs
+        _dims = _gs().embedding_dimension
+        _ecol = f"embedding_{_dims}"
+
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text("""
+                text(f"""
                     SELECT d.id, d.tenant_id
                     FROM documents d
                     WHERE d.status = 'completed'
@@ -71,7 +75,7 @@ def run_gap_analysis_batch(self) -> dict:
                             SELECT 1 FROM scraped_trends t
                             JOIN gap_analysis_results g ON g.document_id = d.id
                             WHERE t.scraped_at > g.analysed_at
-                              AND t.embedding_768 IS NOT NULL
+                              AND t.{_ecol} IS NOT NULL
                         )
                       )
                     ORDER BY d.created_at DESC
