@@ -46,7 +46,7 @@ def generate_embeddings(self, document_id: str, tenant_id: str) -> dict:
 
             if not chunks:
                 logger.warning("no_chunks_to_embed", document_id=document_id)
-                return {"document_id": document_id, "embeddings_generated": 0}
+                return {"document_id": document_id, "tenant_id": tenant_id, "embeddings_generated": 0, "chunks": [], "embeddings": []}
 
             texts = [c["text"] for c in chunks]
             pipeline = EmbeddingPipeline()

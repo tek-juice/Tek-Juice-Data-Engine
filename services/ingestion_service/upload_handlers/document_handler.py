@@ -81,14 +81,11 @@ async def dispatch_processing_pipeline(document_id: str, tenant_id: str) -> None
         from workers.celery.app import celery_app
 
         pipeline = chain(
-            celery_app.signature("tasks.preprocess_document", args=[document_id, tenant_id]),
-            celery_app.signature("tasks.chunk_document", args=[document_id, tenant_id]),
-            celery_app.signature("tasks.generate_embeddings", args=[document_id, tenant_id]),
-            celery_app.signature("tasks.store_vectors", args=[document_id, tenant_id]),
-            celery_app.signature(
-                "tasks.notify_document_completed",
-                kwargs={"document_id": document_id, "tenant_id": tenant_id},
-            ),
+            celery_app.signature("tasks.preprocess_document", args=[document_id, tenant_id], immutable=True),
+            celery_app.signature("tasks.chunk_document", args=[document_id, tenant_id], immutable=True),
+            celery_app.signature("tasks.generate_embeddings", args=[document_id, tenant_id], immutable=True),
+            celery_app.signature("tasks.store_vectors"),
+            celery_app.signature("tasks.notify_document_completed", kwargs={"document_id": document_id, "tenant_id": tenant_id}, immutable=True),
         )
         pipeline.delay()
         logger.info("pipeline_dispatched", document_id=document_id)

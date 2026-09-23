@@ -53,17 +53,24 @@ class PGVectorStore:
 
             inserted = 0
             for record in records:
+                dim = record.dimensions
+                allowed = {768, 1536, 1024, 3072}
+                if dim not in allowed:
+                    logger.warning("unsupported_dimension", dim=dim, chunk_id=record.chunk_id)
+                    continue
+                col = f"embedding_{dim}"
+                embedding_str = str(record.embedding).replace(" ", "")
                 await self._session.execute(
-                    text("""
+                    text(f"""
                         INSERT INTO embeddings
-                            (chunk_id, document_id, tenant_id, embedding,
+                            (chunk_id, document_id, tenant_id, {col},
                              provider, model, dimensions, metadata)
                         VALUES
                             (:chunk_id, :document_id, :tenant_id,
                              cast(:embedding as vector), :provider, :model,
                              :dimensions, cast(:metadata as jsonb))
                         ON CONFLICT (chunk_id) DO UPDATE SET
-                            embedding  = EXCLUDED.embedding,
+                            {col}      = EXCLUDED.{col},
                             provider   = EXCLUDED.provider,
                             model      = EXCLUDED.model,
                             updated_at = NOW()
@@ -72,7 +79,7 @@ class PGVectorStore:
                         "chunk_id":    record.chunk_id,
                         "document_id": record.document_id,
                         "tenant_id":   record.tenant_id,
-                        "embedding":   str(record.embedding),
+                        "embedding":   embedding_str,
                         "provider":    record.provider,
                         "model":       record.model,
                         "dimensions":  record.dimensions,
