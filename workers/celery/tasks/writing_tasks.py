@@ -278,8 +278,10 @@ def embed_gap_drafts(self, document_id: str, tenant_id: str) -> dict:
                     },
                 )
 
-                dim    = len(embedding)
-                e_col  = f"embedding_{dim}"
+                dim           = len(embedding)
+                e_col         = f"embedding_{dim}"
+                # asyncpg cannot cast a bind param to VECTOR — inline the literal
+                embedding_str = str(embedding).replace(" ", "")
                 await session.execute(
                     text(f"""
                         INSERT INTO embeddings
@@ -287,7 +289,7 @@ def embed_gap_drafts(self, document_id: str, tenant_id: str) -> dict:
                              provider, model, dimensions)
                         VALUES
                             (:id, :doc_id, :chunk_id, :tenant_id,
-                             :embedding, :provider, :model, :dim)
+                             '{embedding_str}'::vector, :provider, :model, :dim)
                         ON CONFLICT DO NOTHING
                     """),
                     {
@@ -295,7 +297,6 @@ def embed_gap_drafts(self, document_id: str, tenant_id: str) -> dict:
                         "doc_id":    document_id,
                         "chunk_id":  chunk_id,
                         "tenant_id": tenant_id,
-                        "embedding": embedding,
                         "provider":  provider,
                         "model":     model,
                         "dim":       dim,

@@ -76,8 +76,7 @@ class PGVectorStore:
                         ON CONFLICT (chunk_id) DO UPDATE SET
                             {vector_col} = EXCLUDED.{vector_col},
                             provider     = EXCLUDED.provider,
-                            model        = EXCLUDED.model,
-                            updated_at   = NOW()
+                            model        = EXCLUDED.model
                     """),
                     {
                         "chunk_id":    record.chunk_id,

@@ -44,6 +44,8 @@ SCHEMAS=(
     "004_rls_policies.sql"
     "005_aeo_schema.sql"
     "006_rank_authority_schema.sql"
+    "007_scraped_trends_columns.sql"
+    "008_gap_content_drafts.sql"
 )
 
 info "Running schema migrations…"

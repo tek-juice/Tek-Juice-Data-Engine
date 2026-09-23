@@ -170,7 +170,7 @@ class RankTracker:
                         "sv":            snap.search_volume,
                         "cpc":           snap.cpc,
                         "comp":          snap.competition,
-                        "snap_date":     snap.snapshot_date.isoformat(),
+                        "snap_date":     snap.snapshot_date,
                         "raw":           __import__("json").dumps(snap.raw_serp_item),
                     },
                 )

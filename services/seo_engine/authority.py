@@ -185,10 +185,8 @@ class AuthorityTracker:
                         "spam":      snap.spam_score,
                         "new_bl":    snap.new_backlinks_30d,
                         "lost_bl":   snap.lost_backlinks_30d,
-                        "anchors":   "{" + ",".join(
-                            f'"{a}"' for a in snap.top_anchors[:20]
-                        ) + "}",
-                        "snap_date": snap.snapshot_date.isoformat(),
+                        "anchors":   snap.top_anchors[:20],
+                        "snap_date": snap.snapshot_date,
                         "raw":       json.dumps(snap.raw_data),
                     },
                 )
