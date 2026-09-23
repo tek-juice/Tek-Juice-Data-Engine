@@ -61,15 +61,20 @@ def auto_close_gaps(self, document_id: str, tenant_id: str) -> dict:
             # ── Update after_coverage on the latest gap_analysis_results row ──
             # after_coverage = current before_coverage (i.e. post-update score)
             after_coverage = result.before_coverage
+            # PostgreSQL doesn't support ORDER BY/LIMIT in UPDATE —
+            # use a subquery to target only the most recent row
             await session.execute(
                 text("""
                     UPDATE gap_analysis_results
                     SET after_coverage = :after_cov
-                    WHERE document_id  = :doc_id
-                      AND tenant_id    = :tenant_id
-                      AND after_coverage IS NULL
-                    ORDER BY analysed_at DESC
-                    LIMIT 1
+                    WHERE id = (
+                        SELECT id FROM gap_analysis_results
+                        WHERE document_id = :doc_id
+                          AND tenant_id   = :tenant_id
+                          AND after_coverage IS NULL
+                        ORDER BY analysed_at DESC
+                        LIMIT 1
+                    )
                 """),
                 {
                     "after_cov": after_coverage,
