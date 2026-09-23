@@ -46,17 +46,20 @@ def embed_scraped_trends(self) -> dict:
                     SELECT id, COALESCE(snippet, title, query) AS text
                     FROM scraped_trends
                     WHERE {col} IS NULL
-                      AND COALESCE(snippet, title, query) IS NOT NULL
+                      AND TRIM(COALESCE(snippet, title, query)) != ''
                     ORDER BY scraped_at DESC
                     LIMIT 500
                 """)
             )
             rows = result.fetchall()
 
+        # Filter out any rows whose text is empty after stripping
+        rows = [r for r in rows if r.text and r.text.strip()]
+
         if not rows:
             return {"embedded": 0}
 
-        texts = [row.text for row in rows]
+        texts = [row.text.strip() for row in rows]
         pipeline = EmbeddingPipeline()
         embeddings, _, _ = await pipeline.embed(texts)
 
