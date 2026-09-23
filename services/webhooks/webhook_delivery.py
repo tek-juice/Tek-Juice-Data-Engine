@@ -69,7 +69,7 @@ class DeliveryResult:
     success: bool
     error: str | None = None
     duration_ms: int = 0
-    attempted_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    attempted_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 # ── Core delivery logic ───────────────────────────────────────────────────────

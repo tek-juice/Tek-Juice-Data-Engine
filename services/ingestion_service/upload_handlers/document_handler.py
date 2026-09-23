@@ -3,7 +3,6 @@ DATA ENGINE — Document Upload Handler
 Creates document DB records and dispatches Celery pipeline tasks.
 """
 
-import json
 import uuid
 import structlog
 from sqlalchemy import text
@@ -39,7 +38,7 @@ async def create_document_record(
                  file_size_bytes, mime_type, storage_path, metadata)
             VALUES
                 (:id, :tenant_id, :filename, :source_type, :status,
-                 :file_size_bytes, :mime_type, :storage_path, :metadata)
+                 :file_size_bytes, :mime_type, :storage_path, cast(:metadata as jsonb))
         """),
         {
             "id": document_id,
@@ -50,7 +49,7 @@ async def create_document_record(
             "file_size_bytes": len(content),
             "mime_type": mime_type,
             "storage_path": storage_path,
-            "metadata": json.dumps({"fingerprint": document_fingerprint(filename, content)}),
+            "metadata": f'{{"fingerprint": "{document_fingerprint(filename, content)}"}}',
         },
     )
 
@@ -76,32 +75,19 @@ async def dispatch_processing_pipeline(document_id: str, tenant_id: str) -> None
     """
     Dispatch the full processing pipeline as a Celery chain:
     preprocess → chunk → embed → store → webhook(document.completed)
-
-    IMPORTANT: preprocess, chunk, and generate_embeddings use .si() (immutable
-    signatures) so Celery does NOT prepend the previous task's return value as an
-    extra positional argument.  store_vectors is the deliberate exception — it
-    receives generate_embeddings' full result dict as its sole argument by design.
-    notify_document_completed uses kwargs only, so it is also immutable.
     """
     try:
         from celery import chain
         from workers.celery.app import celery_app
 
         pipeline = chain(
-            celery_app.signature("tasks.preprocess_document",  args=[document_id, tenant_id], immutable=True),
-            celery_app.signature("tasks.chunk_document",        args=[document_id, tenant_id], immutable=True),
-            celery_app.signature("tasks.generate_embeddings",   args=[document_id, tenant_id], immutable=True),
-            # store_vectors intentionally receives the generate_embeddings result dict — NOT immutable.
-            celery_app.signature("tasks.store_vectors"),
-            celery_app.signature(
-                "tasks.run_gap_analysis",
-                args=[document_id, tenant_id],
-                immutable=True,
-            ),
+            celery_app.signature("tasks.preprocess_document", args=[document_id, tenant_id]),
+            celery_app.signature("tasks.chunk_document", args=[document_id, tenant_id]),
+            celery_app.signature("tasks.generate_embeddings", args=[document_id, tenant_id]),
+            celery_app.signature("tasks.store_vectors", args=[document_id, tenant_id]),
             celery_app.signature(
                 "tasks.notify_document_completed",
                 kwargs={"document_id": document_id, "tenant_id": tenant_id},
-                immutable=True,
             ),
         )
         pipeline.delay()

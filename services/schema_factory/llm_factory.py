@@ -196,7 +196,7 @@ Return only valid JSON-LD, no explanation."""
                             (document_id, tenant_id, schema_type, format, content, metadata)
                         VALUES
                             (:document_id, :tenant_id, :schema_type, 'jsonld',
-                             :content, :metadata)
+                             cast(:content as jsonb), cast(:metadata as jsonb))
                     """),
                     {
                         "document_id": result["document_id"],

@@ -85,13 +85,7 @@ class GapAnalyzer:
 
         if not trend_vectors:
             logger.warning("gap_analysis_no_trend_vectors")
-            empty = self._empty_result(document_id, tenant_id)
-            try:
-                await self._persist(empty)
-                await self._session.commit()
-            except Exception:
-                pass
-            return empty
+            return self._empty_result(document_id, tenant_id)
 
         # Compute coverage
         before_coverage = self._comparator.average_coverage_score(
@@ -127,12 +121,7 @@ class GapAnalyzer:
             reference_trend_ids=reference_ids[:50],
         )
 
-        try:
-            await self._persist(result)
-            await self._session.commit()
-        except Exception as _persist_exc:
-            logger.warning("gap_persist_failed", error=str(_persist_exc))
-
+        await self._persist(result)
         logger.info(
             "gap_analysis_complete",
             document_id=document_id,
@@ -142,38 +131,21 @@ class GapAnalyzer:
         )
         return result
 
-    @staticmethod
-    def _parse_vector(raw) -> list[float]:
-        """
-        asyncpg returns pgvector columns as strings like '[0.1,0.2,...]'
-        when the pgvector codec isn't registered. Parse them to list[float].
-        """
-        if isinstance(raw, list):
-            return [float(x) for x in raw]
-        if isinstance(raw, str):
-            return [float(x) for x in raw.strip("[]").split(",") if x.strip()]
-        # Already a sequence (numpy array, etc.)
-        return [float(x) for x in raw]
-
     async def _load_document_vectors(
         self, document_id: str, tenant_id: str
     ) -> tuple[list[list[float]], list[str]]:
-        from configs.settings import get_settings as _get_settings
-        _dims = _get_settings().embedding_dimension
-        _col = f"embedding_{_dims}"
         result = await self._session.execute(
-            text(f"""
-                SELECT e.{_col}::text AS embedding, c.text
+            text("""
+                SELECT e.embedding, c.text
                 FROM embeddings e
                 JOIN chunks c ON c.id = e.chunk_id
                 WHERE e.document_id = :doc_id AND e.tenant_id = :tenant_id
-                  AND e.{_col} IS NOT NULL
                 LIMIT 500
             """),
             {"doc_id": document_id, "tenant_id": tenant_id},
         )
         rows = result.fetchall()
-        vectors = [self._parse_vector(row.embedding) for row in rows]
+        vectors = [list(row.embedding) for row in rows]
         texts = [row.text for row in rows]
         return vectors, texts
 
@@ -181,23 +153,9 @@ class GapAnalyzer:
         from configs.settings import get_settings as _get_settings
         _dims = _get_settings().embedding_dimension
         _col = f"embedding_{_dims}"
-
-        # Check the column exists before querying — older deployments may be missing it
-        col_check = await self._session.execute(
-            text("""
-                SELECT column_name FROM information_schema.columns
-                WHERE table_name = 'scraped_trends' AND column_name = :col
-                LIMIT 1
-            """),
-            {"col": _col},
-        )
-        if not col_check.fetchone():
-            logger.warning("trend_embedding_col_missing", column=_col)
-            return [], []
-
         result = await self._session.execute(
             text(f"""
-                SELECT id, title, query, {_col}::text AS embedding
+                SELECT id, title, query, {_col} AS embedding
                 FROM scraped_trends
                 WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
@@ -206,61 +164,32 @@ class GapAnalyzer:
             """)
         )
         rows = result.fetchall()
-        vectors = [self._parse_vector(row.embedding) for row in rows]
-        data = [
-            {
-                "id":    str(row.id),
-                "title": row.title or "",
-                "query": row.query or "",
-            }
-            for row in rows
-        ]
+        vectors = [list(row.embedding) for row in rows]
+        data = [{"id": row.id, "title": row.title, "query": row.query} for row in rows]
         return vectors, data
 
     async def _persist(self, result: GapAnalysisResult) -> None:
-        import json as _json
-        missing = result.missing_topics or []
-        recs    = result.recommendations or []
-
-        # Detect whether missing_topics is TEXT[] or JSONB on the live DB
-        col_type_row = await self._session.execute(
-            text("""
-                SELECT data_type FROM information_schema.columns
-                WHERE table_name = 'gap_analysis_results'
-                  AND column_name = 'missing_topics'
-                LIMIT 1
-            """)
-        )
-        col_type = (col_type_row.scalar() or "").lower()
-        # JSONB columns need json-serialised strings; TEXT[] columns take Python lists
-        if "json" in col_type:
-            missing_val = _json.dumps(missing)
-            recs_val    = _json.dumps(recs)
-        else:
-            missing_val = missing
-            recs_val    = recs
-
         await self._session.execute(
             text("""
                 INSERT INTO gap_analysis_results
-                    (tenant_id, document_id, gap_score, severity,
-                     before_coverage, after_coverage,
-                     missing_topics, recommendations)
+                    (document_id, tenant_id, gap_score, severity,
+                     missing_topics, recommendations, reference_doc_ids,
+                     before_coverage, metadata)
                 VALUES
-                    (:tenant_id, :document_id, :gap_score, :severity,
-                     :before_coverage, :after_coverage,
-                     :missing_topics, :recommendations)
-                ON CONFLICT DO NOTHING
+                    (:document_id, :tenant_id, :gap_score, :severity,
+                     :missing_topics, :recommendations, :reference_ids,
+                     :before_coverage, cast(:metadata as jsonb))
             """),
             {
-                "tenant_id":       str(result.tenant_id),
-                "document_id":     str(result.document_id),
-                "gap_score":       float(result.gap_score),
-                "severity":        str(result.severity),
+                "document_id":   result.document_id,
+                "tenant_id":     result.tenant_id,
+                "gap_score":     result.gap_score,
+                "severity":      result.severity,
+                "missing_topics": result.missing_topics,
+                "recommendations": result.recommendations,
+                "reference_ids": result.reference_trend_ids,
                 "before_coverage": result.before_coverage,
-                "after_coverage":  result.after_coverage,
-                "missing_topics":  missing_val,
-                "recommendations": recs_val,
+                "metadata":      json.dumps({"covered_topics": result.covered_topics}),
             },
         )
 

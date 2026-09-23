@@ -124,7 +124,7 @@ class ContentDraft:
     content_brief: list[str]
     model_used: str
     provider_used: str
-    generated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    generated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     geo_score: float = 0.0           # LLM visibility score (0-100) from GEO engine
     aeo_score: float = 0.0           # Answer engine score (0-100) from AEO engine
     composite_score: float = 0.0     # (geo_score + aeo_score) / 2
@@ -147,7 +147,7 @@ class ContentDraft:
             "content_brief":      self.content_brief,
             "model_used":         self.model_used,
             "provider_used":      self.provider_used,
-            "generated_at":       self.generated_at,
+            "generated_at":       self.generated_at.isoformat() if hasattr(self.generated_at, "isoformat") else str(self.generated_at),
             "geo_score":          self.geo_score,
             "aeo_score":          self.aeo_score,
             "composite_score":    self.composite_score,
@@ -364,13 +364,13 @@ class LLMWritingAgent:
                     "priority":        draft.priority,
                     "draft_text":      draft.draft_text,
                     "word_count":      draft.word_count,
-                    "query_variants":  draft.query_variants,
-                    "schema_types":    draft.schema_types,
-                    "authority_signals": draft.authority_signals,
-                    "content_brief":   draft.content_brief,
+                    "query_variants":  list(draft.query_variants) if draft.query_variants else [],
+                    "schema_types":    list(draft.schema_types) if draft.schema_types else [],
+                    "authority_signals": list(draft.authority_signals) if draft.authority_signals else [],
+                    "content_brief":   list(draft.content_brief) if draft.content_brief else [],
                     "model_used":      draft.model_used,
                     "provider_used":   draft.provider_used,
-                    "generated_at":    draft.generated_at,
+                    "generated_at":    draft.generated_at if isinstance(draft.generated_at, datetime) else datetime.now(UTC),
                 },
             )
             inserted += 1
@@ -383,7 +383,6 @@ class LLMWritingAgent:
                     updated_at = NOW()
                 WHERE document_id = :doc_id
                   AND tenant_id   = :tenant_id
-                  AND status      = 'pending'
             """),
             {
                 "doc_id":    result.document_id,

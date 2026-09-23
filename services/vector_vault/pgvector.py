@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from configs.settings import get_settings
 from configs.security import set_tenant_context_sql
-from services.embedding_service.embedding_pipeline import get_vector_column
 from services.embedding_service.vector_builder import VectorRecord
 from shared.exceptions.base import DatabaseError
 
@@ -54,34 +53,26 @@ class PGVectorStore:
 
             inserted = 0
             for record in records:
-                # asyncpg does not support :param::type cast syntax.
-                # Embed the vector literal directly in the SQL string so
-                # pgvector receives it as a properly typed value.
-                # Use the dimension-namespaced column (e.g. embedding_768)
-                # required by the CHECK constraint on the embeddings table.
-                vector_col = get_vector_column(
-                    record.provider,
-                    record.model.removeprefix("models/"),
-                )
-                embedding_str = str(record.embedding)
                 await self._session.execute(
-                    text(f"""
+                    text("""
                         INSERT INTO embeddings
-                            (chunk_id, document_id, tenant_id, {vector_col},
+                            (chunk_id, document_id, tenant_id, embedding,
                              provider, model, dimensions, metadata)
                         VALUES
                             (:chunk_id, :document_id, :tenant_id,
-                             '{embedding_str}'::vector, :provider, :model,
-                             :dimensions, :metadata)
+                             cast(:embedding as vector), :provider, :model,
+                             :dimensions, cast(:metadata as jsonb))
                         ON CONFLICT (chunk_id) DO UPDATE SET
-                            {vector_col} = EXCLUDED.{vector_col},
-                            provider     = EXCLUDED.provider,
-                            model        = EXCLUDED.model
+                            embedding  = EXCLUDED.embedding,
+                            provider   = EXCLUDED.provider,
+                            model      = EXCLUDED.model,
+                            updated_at = NOW()
                     """),
                     {
                         "chunk_id":    record.chunk_id,
                         "document_id": record.document_id,
                         "tenant_id":   record.tenant_id,
+                        "embedding":   str(record.embedding),
                         "provider":    record.provider,
                         "model":       record.model,
                         "dimensions":  record.dimensions,

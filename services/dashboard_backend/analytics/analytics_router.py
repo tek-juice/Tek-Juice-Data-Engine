@@ -16,6 +16,47 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["Dashboard Analytics"])
 
 
+@router.get("/tenant/me")
+async def get_current_tenant(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return the current tenant's profile and connection status."""
+    try:
+        result = await db.execute(
+            text("""
+                SELECT
+                    t.id::text,
+                    t.name,
+                    t.slug,
+                    t.tier,
+                    t.is_active,
+                    t.website_url,
+                    t.platform_type,
+                    t.injection_status,
+                    t.last_crawled_at,
+                    t.created_at,
+                    (SELECT COUNT(*) FROM documents WHERE tenant_id = t.id AND status = 'completed') AS documents_count,
+                    (SELECT COUNT(*) FROM gap_analysis_results WHERE tenant_id = t.id) AS gap_analyses_count
+                FROM tenants t
+                WHERE t.id = :tid
+            """),
+            {"tid": current_user.tenant_id},
+        )
+        row = result.fetchone()
+        if not row:
+            return {"id": current_user.tenant_id, "name": "Unknown"}
+        data = dict(row._mapping)
+        # Serialise datetimes
+        for key in ("last_crawled_at", "created_at"):
+            if data.get(key) and hasattr(data[key], "isoformat"):
+                data[key] = data[key].isoformat()
+        return data
+    except Exception as exc:
+        logger.error("get_current_tenant_failed", error=str(exc))
+        return {"id": current_user.tenant_id, "error": str(exc)}
+
+
 @router.get("/overview")
 async def system_overview(
     current_user: CurrentUser,

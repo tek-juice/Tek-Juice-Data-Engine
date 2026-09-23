@@ -142,7 +142,7 @@ class GapOptimiser:
                      missing_topics, close_plan, status, created_at)
                 VALUES
                     (:document_id, :tenant_id, :gap_score, :severity,
-                     :missing_topics, :close_plan, 'pending', :now)
+                     :missing_topics, cast(:close_plan as jsonb), 'pending', :now)
                 ON CONFLICT (document_id, tenant_id)
                 DO UPDATE SET
                     gap_score      = EXCLUDED.gap_score,
@@ -237,21 +237,19 @@ class GapOptimiser:
         self, document_id: str, tenant_id: str, priority: str = "medium"
     ) -> None:
         """Update document metadata to flag it for content expansion."""
-        # asyncpg rejects ::text cast on bind params — inline the priority value
-        # directly (it is always one of: "low", "medium", "high", "critical")
-        safe_priority = priority.strip('"').replace("'", "")  # sanitise
         await self._session.execute(
-            text(f"""
+            text("""
                 UPDATE documents
                 SET metadata = jsonb_set(
-                    COALESCE(metadata, '{{}}'),
-                    '{{expansion_priority}}',
-                    '"{safe_priority}"'
+                    COALESCE(metadata, '{}'),
+                    '{expansion_priority}',
+                    :priority::jsonb
                 )
                 WHERE id = :doc_id AND tenant_id = :tenant_id
             """),
             {
-                "doc_id":    document_id,
-                "tenant_id": tenant_id,
+                "priority":   f'"{priority}"',
+                "doc_id":     document_id,
+                "tenant_id":  tenant_id,
             },
         )
