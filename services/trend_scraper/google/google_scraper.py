@@ -43,7 +43,6 @@ class GoogleScraper:
             self._geo_cycle = iter(GEO_TARGETS)
             return next(self._geo_cycle)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=30))
     async def fetch(self, query: str, limit: int = 10, country: str | None = None) -> list[dict]:
         """
         Fetch search results for a query with geo-targeting and rate limiting.
@@ -52,6 +51,9 @@ class GoogleScraper:
             query:   Search query string.
             limit:   Max results (Google CSE max: 10 per request).
             country: 2-letter country code for geo-targeting. Auto-rotates if None.
+
+        Returns [] immediately (without retrying) on 429 quota exceeded so the
+        free-tier daily limit is never burnt through by retries.
         """
         if not self._api_key or not self._cx:
             logger.warning("google_scraper_not_configured")
@@ -77,6 +79,11 @@ class GoogleScraper:
                         **geo_params,
                     },
                 )
+                # 429 = daily quota hit — return empty, don't retry
+                if response.status_code == 429:
+                    logger.warning("google_cse_quota_exceeded_skipping", query=query)
+                    return []
+
                 response.raise_for_status()
 
                 for item in response.json().get("items", []):
@@ -105,7 +112,7 @@ class GoogleScraper:
                 from services.trend_scraper.utils.anti_block import _proxy_rotator
                 _proxy_rotator.mark_failed(proxy_url)
             logger.error("google_search_http_error", status=exc.response.status_code, geo=geo)
-            raise
+            # Don't re-raise — return empty so the scheduler continues with other sources
 
         await smart_delay()
         return results

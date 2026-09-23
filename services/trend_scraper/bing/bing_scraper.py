@@ -182,11 +182,12 @@ class BingScraper:
             )
 
         except httpx.HTTPStatusError as exc:
-            logger.error(
-                "bing_scraperapi_http_error",
-                status=exc.response.status_code,
-                query=query,
-            )
+            status = exc.response.status_code
+            if status in (403, 429):
+                # 403 = out of ScraperAPI credits; 429 = rate limited — skip silently
+                logger.warning("bing_scraperapi_quota_skip", status=status, query=query)
+            else:
+                logger.error("bing_scraperapi_http_error", status=status, query=query)
         except Exception as exc:
             logger.warning("bing_scraperapi_failed", error=str(exc), query=query)
 

@@ -51,6 +51,32 @@ class TrendScraperScheduler:
             "indirect":     IndirectSignalCollector(),
         }
 
+    def _free_sources(self) -> list[str]:
+        """
+        Sources that require zero paid API credits.
+        Always-on; used as the default when no specific sources are requested.
+
+        'google' and 'bing' are kept available but excluded from the default
+        run to avoid burning paid/free-tier quotas unintentionally:
+          - Google CSE: 100 queries/day free — exhausted in seconds at full concurrency
+          - ScraperAPI: limited free credits, falls back to direct Bing anyway
+          - Bing Microsoft API: requires Azure account
+        Both are still reachable by passing sources=["google"] / sources=["bing"]
+        or by setting GOOGLE_SEARCH_API_KEY / SCRAPER_API_KEY / BING_SEARCH_API_KEY
+        in .env — the scrapers check for keys themselves and skip gracefully.
+        """
+        free = ["news", "indirect"]
+        # Add social_media only if its own indirect channels are not enough
+        free.append("social_media")
+        # Add Google CSE only when a key is configured (it skips gracefully on 429
+        # but we avoid the wasted quota from retries by not including it by default)
+        if settings.google_search_api_key and settings.google_search_cx:
+            free.append("google")
+        # Add Bing only when at least one Bing-specific key is configured
+        if settings.scraper_api_key or settings.bing_search_api_key:
+            free.append("bing")
+        return free
+
     async def run(
         self,
         sources: list[str] | None = None,
@@ -60,13 +86,14 @@ class TrendScraperScheduler:
         Run scraping across specified sources concurrently.
 
         Args:
-            sources: List of source names to scrape. Defaults to all.
+            sources: List of source names to scrape. Defaults to free sources only.
+                     Pass sources=["google", "bing", ...] to force specific scrapers.
             queries: List of search queries. Defaults to configured defaults.
 
         Returns:
             Summary dict with counts per source and total elapsed time.
         """
-        active_sources = sources or list(self._scrapers.keys())
+        active_sources = sources or self._free_sources()
         search_queries = queries or self._default_queries()
 
         start = datetime.now(UTC)
