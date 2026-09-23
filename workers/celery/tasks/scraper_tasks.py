@@ -48,7 +48,7 @@ def embed_scraped_trends(self) -> dict:
                     WHERE {col} IS NULL
                       AND COALESCE(snippet, title, query) IS NOT NULL
                     ORDER BY scraped_at DESC
-                    LIMIT 100
+                    LIMIT 500
                 """)
             )
             rows = result.fetchall()
