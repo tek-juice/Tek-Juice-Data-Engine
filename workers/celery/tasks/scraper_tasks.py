@@ -62,9 +62,11 @@ def embed_scraped_trends(self) -> dict:
 
         async with AsyncSessionLocal() as session:
             for row, embedding in zip(rows, embeddings):
+                # asyncpg rejects ::vector cast on bind params — inline the literal
+                embedding_str = str(embedding).replace(" ", "")
                 await session.execute(
-                    text(f"UPDATE scraped_trends SET {col} = :emb::vector({dims}) WHERE id = :id"),
-                    {"emb": str(embedding), "id": row.id},
+                    text(f"UPDATE scraped_trends SET {col} = '{embedding_str}'::vector({dims}) WHERE id = :id"),
+                    {"id": row.id},
                 )
             await session.commit()
 

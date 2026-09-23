@@ -75,15 +75,16 @@ class VectorSearch:
             await self._session.execute(text(set_tenant_context_sql(tenant_id)))
             await self._session.execute(text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
 
+            # asyncpg rejects ::vector cast on named bind params — inline the literal
+            vec_str = str(query_embedding).replace(" ", "")
             where_clauses = [
                 "e.tenant_id = :tenant_id",
-                "1 - (e.embedding <=> :query_vec::vector) >= :threshold",
+                f"1 - (e.embedding <=> '{vec_str}'::vector) >= :threshold",
             ]
             params: dict[str, Any] = {
-                "tenant_id":  tenant_id,
-                "query_vec":  str(query_embedding),
-                "threshold":  threshold,
-                "top_k":      k,
+                "tenant_id": tenant_id,
+                "threshold": threshold,
+                "top_k":     k,
             }
 
             if document_id:
@@ -98,14 +99,14 @@ class VectorSearch:
                         e.chunk_id,
                         e.document_id,
                         c.text,
-                        1 - (e.embedding <=> :query_vec::vector) AS similarity,
+                        1 - (e.embedding <=> '{vec_str}'::vector) AS similarity,
                         e.provider,
                         e.model,
                         e.metadata
                     FROM embeddings e
                     JOIN chunks c ON c.id = e.chunk_id
                     WHERE {where_sql}
-                    ORDER BY e.embedding <=> :query_vec::vector
+                    ORDER BY e.embedding <=> '{vec_str}'::vector
                     LIMIT :top_k
                 """),
                 params,
