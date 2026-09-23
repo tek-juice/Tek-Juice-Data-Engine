@@ -158,3 +158,156 @@ async def activity_log(
         {"t": current_user.tenant_id, "hours": hours, "limit": limit},
     )
     return [dict(row._mapping) for row in result.fetchall()]
+
+
+@router.get("/tenant/me")
+async def my_tenant_performance(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Performance snapshot for the calling tenant (scoped by JWT/API key)."""
+    tid = current_user.tenant_id
+
+    # ── Tenant summary row ────────────────────────────────────────────────────
+    tenant_row = await db.execute(
+        text("""
+            SELECT
+                t.id                                                          AS tenant_id,
+                t.name,
+                t.tier                                                        AS plan,
+                t.created_at,
+                COALESCE(
+                    (SELECT MAX(te.created_at) FROM telemetry_events te WHERE te.tenant_id = t.id),
+                    t.created_at
+                )                                                             AS last_active,
+                (SELECT COUNT(*) FROM documents d WHERE d.tenant_id = t.id)  AS documents_total,
+                (SELECT COUNT(*) FROM gap_close_actions g WHERE g.tenant_id = t.id AND g.status = 'completed') AS gaps_closed,
+                (SELECT COUNT(*) FROM gap_content_drafts gcd WHERE gcd.tenant_id = t.id) AS drafts_generated,
+                COALESCE(
+                    (SELECT AVG(gap_score) FROM gap_analysis_results WHERE tenant_id = t.id), 0
+                )                                                             AS avg_gap_score,
+                0                                                             AS avg_seo_score,
+                0                                                             AS avg_geo_score,
+                0                                                             AS avg_aeo_score,
+                0                                                             AS coverage_pct,
+                0                                                             AS api_calls_total,
+                0                                                             AS api_calls_24h,
+                0                                                             AS webhooks_delivered,
+                0.0                                                           AS error_rate
+            FROM tenants t
+            WHERE t.id = :tid
+        """),
+        {"tid": tid},
+    )
+    tenant = tenant_row.fetchone()
+    if not tenant:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    t = dict(tenant._mapping)
+
+    # ── Gap history — last 14 days ────────────────────────────────────────────
+    gap_hist_result = await db.execute(
+        text("""
+            SELECT
+                DATE(analysed_at)              AS day,
+                AVG(gap_score)                 AS gap_score,
+                AVG(COALESCE(before_coverage, 0)) AS coverage_before,
+                AVG(COALESCE(after_coverage, 0))  AS coverage_after,
+                0                              AS gaps_closed
+            FROM gap_analysis_results
+            WHERE tenant_id = :tid
+              AND analysed_at >= NOW() - INTERVAL '14 days'
+            GROUP BY DATE(analysed_at)
+            ORDER BY day DESC
+            LIMIT 14
+        """),
+        {"tid": tid},
+    )
+    gap_history = [
+        {
+            "day":             str(r["day"]),
+            "gap_score":       float(r["gap_score"] or 0),
+            "coverage_before": float(r["coverage_before"] or 0),
+            "coverage_after":  float(r["coverage_after"] or 0),
+            "gaps_closed":     int(r["gaps_closed"] or 0),
+        }
+        for r in [dict(row._mapping) for row in gap_hist_result.fetchall()]
+    ]
+
+    # ── Visibility history — last 24 h (hourly telemetry) ────────────────────
+    vis_result = await db.execute(
+        text("""
+            SELECT
+                DATE_TRUNC('hour', created_at) AS time,
+                0                              AS seo,
+                0                              AS geo,
+                0                              AS aeo
+            FROM telemetry_events
+            WHERE tenant_id = :tid
+              AND created_at >= NOW() - INTERVAL '24 hours'
+            GROUP BY DATE_TRUNC('hour', created_at)
+            ORDER BY time DESC
+            LIMIT 24
+        """),
+        {"tid": tid},
+    )
+    visibility_history = [
+        {
+            "time": row["time"].isoformat() if hasattr(row["time"], "isoformat") else str(row["time"]),
+            "seo":  int(row["seo"] or 0),
+            "geo":  int(row["geo"] or 0),
+            "aeo":  int(row["aeo"] or 0),
+        }
+        for row in [dict(r._mapping) for r in vis_result.fetchall()]
+    ]
+
+    # ── Recent activity — last 50 events ─────────────────────────────────────
+    act_result = await db.execute(
+        text("""
+            SELECT event_type, service, status, duration_ms, payload, created_at
+            FROM telemetry_events
+            WHERE tenant_id = :tid
+            ORDER BY created_at DESC
+            LIMIT 50
+        """),
+        {"tid": tid},
+    )
+    recent_activity = [
+        {
+            "event_type":  r["event_type"],
+            "service":     r["service"],
+            "status":      r["status"],
+            "duration_ms": r["duration_ms"],
+            "payload":     r["payload"],
+            "timestamp":   r["created_at"].isoformat() if hasattr(r["created_at"], "isoformat") else str(r["created_at"]),
+        }
+        for r in [dict(row._mapping) for row in act_result.fetchall()]
+    ]
+
+    return {
+        "tenant": {
+            "tenant_id":          str(t["tenant_id"]),
+            "name":               t["name"] or "My Product",
+            "key_prefix":         "de_prod",
+            "plan":               t["plan"] or "free",
+            "created_at":         t["created_at"].isoformat() if hasattr(t["created_at"], "isoformat") else str(t["created_at"]),
+            "last_active":        t["last_active"].isoformat() if t["last_active"] and hasattr(t["last_active"], "isoformat") else None,
+            "documents_total":    int(t["documents_total"] or 0),
+            "api_calls_total":    int(t["api_calls_total"] or 0),
+            "api_calls_24h":      int(t["api_calls_24h"] or 0),
+            "webhooks_delivered": int(t["webhooks_delivered"] or 0),
+            "avg_gap_score":      float(t["avg_gap_score"] or 0),
+            "avg_seo_score":      float(t["avg_seo_score"] or 0),
+            "avg_geo_score":      float(t["avg_geo_score"] or 0),
+            "avg_aeo_score":      float(t["avg_aeo_score"] or 0),
+            "coverage_pct":       float(t["coverage_pct"] or 0),
+            "drafts_generated":   int(t["drafts_generated"] or 0),
+            "gaps_closed":        int(t["gaps_closed"] or 0),
+            "error_rate":         float(t["error_rate"] or 0),
+            "status":             "active",
+        },
+        "usage_timeseries":   [],
+        "recent_activity":    recent_activity,
+        "gap_history":        gap_history,
+        "visibility_history": visibility_history,
+    }

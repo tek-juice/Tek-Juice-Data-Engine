@@ -231,6 +231,8 @@ async def get_rank_history(
     session: AsyncSession = Depends(get_db_session),
 ):
     """Return rank tracking snapshots for a domain over the last N days."""
+    if not keyword or not keyword.strip():
+        return {"domain": domain, "snapshots": [], "count": 0}
     try:
         from sqlalchemy import text
         query = """

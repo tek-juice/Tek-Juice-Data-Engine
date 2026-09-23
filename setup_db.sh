@@ -58,6 +58,21 @@ for f in "${SCHEMAS[@]}"; do
         || err "  $f FAILED — check the output above"
 done
 
+# ── Migrations (not part of idempotent schemas) ───────────────────────────
+MIGRATIONS=(
+    "002_dead_letter_queue.sql"
+)
+
+info "Running migrations…"
+for f in "${MIGRATIONS[@]}"; do
+    info "  Applying migration $f …"
+    docker exec -i "$DB_CONTAINER" \
+        psql -U "$DB_USER" -d "$DB_NAME" \
+        < "database/migrations/$f" \
+        && ok "  $f" \
+        || err "  $f FAILED — check the output above"
+done
+
 # ── 3. Seed first tenant + admin user ─────────────────────────────────────
 info "Seeding admin tenant and user…"
 
