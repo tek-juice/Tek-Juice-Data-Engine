@@ -94,17 +94,9 @@ celery_app.conf.update(
             "schedule": 900,    # 15 minutes
         },
         # ── Automated website crawl — zero human effort after URL registration ──
-        "crawl-tenant-websites-daily": {
-            "task": "tasks.crawl_all_tenant_websites",
-            "schedule": 86400,  # 24 hours — re-crawls every tenant's site daily
-        },
         # ── Content injection — push written drafts into connected products ──────
         # Runs on the same cadence as gap auto-close so published content
         # follows immediately after drafts are written and embedded.
-        "inject-drafts-batch": {
-            "task":     "tasks.inject_drafts_batch",
-            "schedule": settings.gap_auto_close_interval_seconds,
-        },
         # ── Telemetry — previously defined only in dead cron_schedule.py ─────────
         # These two tasks never fired before. Now registered here so Beat runs them.
         "flush-telemetry-30s": {

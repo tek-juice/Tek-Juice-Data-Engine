@@ -264,7 +264,7 @@ def embed_gap_drafts(self, document_id: str, tenant_id: str) -> dict:
                              token_count, char_start, char_end, strategy)
                         VALUES
                             (:id, :doc_id, :tenant_id, :idx, :text,
-                             :tokens, :start, :end, 'gap_draft')
+                             :tokens, :start, :end, 'token')
                     """),
                     {
                         "id":        chunk_id,

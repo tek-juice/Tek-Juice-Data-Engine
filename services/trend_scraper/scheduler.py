@@ -154,11 +154,12 @@ class TrendScraperScheduler:
     @staticmethod
     def _default_queries() -> list[str]:
         return [
-            "AI data processing trends 2025",
-            "vector database technology",
-            "semantic search innovations",
-            "large language model optimization",
-            "enterprise AI infrastructure",
+            "moving house checklist UK",
+            "moving house costs UK",
+            "how to budget for moving house",
+            "moving expense tracker",
+            "change of address checklist UK",
+            "removals cost UK",
         ]
 
     @staticmethod

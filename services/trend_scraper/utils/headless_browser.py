@@ -203,6 +203,18 @@ class HeadlessBrowser:
             # Extract content
             html  = await page.content()
             title = await page.title()
+            # Extract links FIRST, before the text-cleanup pass below mutates
+            # the live DOM by removing nav/header/footer/aside elements —
+            # otherwise any links inside those wrapper tags (i.e. the site's
+            # actual navigation menu) are destroyed before we can see them.
+            links: list[str] = []
+            if extract_links:
+                links = await page.evaluate("""
+                    () => Array.from(document.querySelectorAll('a[href]'))
+                         .map(a => a.href)
+                         .filter(h => h.startsWith('http'))
+                         .slice(0, 100)
+                """)
             text  = await page.evaluate("""
                 () => {
                     // Remove script, style, nav, footer noise
@@ -212,14 +224,6 @@ class HeadlessBrowser:
                     return document.body ? document.body.innerText.trim() : '';
                 }
             """)
-            links: list[str] = []
-            if extract_links:
-                links = await page.evaluate("""
-                    () => Array.from(document.querySelectorAll('a[href]'))
-                         .map(a => a.href)
-                         .filter(h => h.startsWith('http'))
-                         .slice(0, 100)
-                """)
             if self._proxy_url:
                 _proxy_rotator.mark_success(self._proxy_url)
             return PageContent(

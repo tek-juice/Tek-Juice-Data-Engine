@@ -7,6 +7,8 @@ Handles:
   - SPAs built with Next.js, React, Vue, Angular (Playwright, DOM hydration)
   - Cloudflare WAF-protected sites (stealth browser fingerprinting)
   - robots.txt compliance checking before crawling
+  - sitemap.xml discovery (seeds the crawl queue with every declared URL,
+    including pages not reachable via in-page link following)
   - Configurable depth and page limit
 
 Used by:
@@ -18,6 +20,7 @@ Used by:
 from __future__ import annotations
 
 import asyncio
+import re
 import structlog
 from urllib.parse import urlparse, urljoin
 from typing import AsyncGenerator
@@ -27,6 +30,9 @@ import httpx
 from services.trend_scraper.utils.headless_browser import SmartScraper, PageContent
 
 logger = structlog.get_logger(__name__)
+
+_LOC_RE = re.compile(r"<loc>\s*(.*?)\s*</loc>", re.IGNORECASE | re.DOTALL)
+_SITEMAP_INDEX_RE = re.compile(r"<sitemapindex", re.IGNORECASE)
 
 
 class RobotsChecker:
@@ -79,9 +85,66 @@ class RobotsChecker:
         self._cache[domain] = disallowed
 
 
+class SitemapDiscoverer:
+    """
+    Fetches sitemap.xml (and nested sitemap indexes) to discover every URL
+    a site declares, independent of in-page link following.
+    """
+
+    def __init__(self, timeout: float = 10.0) -> None:
+        self._timeout = timeout
+
+    async def discover(self, base_domain: str) -> list[str]:
+        """
+        Return every <loc> URL found in base_domain/sitemap.xml.
+        Follows one level of sitemap-index nesting (sitemaps that list
+        other sitemaps rather than pages directly).
+        """
+        urls: list[str] = []
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
+                top = await self._fetch_and_parse(client, f"{base_domain}/sitemap.xml")
+                if top is None:
+                    return urls
+
+                body, locs = top
+                if _SITEMAP_INDEX_RE.search(body):
+                    # This is a sitemap index — fetch each child sitemap.
+                    for child_url in locs:
+                        child = await self._fetch_and_parse(client, child_url)
+                        if child:
+                            _, child_locs = child
+                            urls.extend(child_locs)
+                else:
+                    urls.extend(locs)
+        except Exception as exc:
+            logger.debug("sitemap_discovery_failed", domain=base_domain, error=str(exc))
+
+        logger.info("sitemap_discovered", domain=base_domain, url_count=len(urls))
+        return urls
+
+    async def _fetch_and_parse(
+        self, client: httpx.AsyncClient, url: str
+    ) -> tuple[str, list[str]] | None:
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return None
+            body = resp.text
+            locs = _LOC_RE.findall(body)
+            return body, locs
+        except Exception as exc:
+            logger.debug("sitemap_fetch_failed", url=url, error=str(exc))
+            return None
+
+
 class SiteCrawler:
     """
     Multi-page crawler with robots.txt compliance and SPA support.
+
+    Seeds its queue from sitemap.xml (when available) in addition to
+    following in-page links, so pages with no internal nav path are
+    still discovered.
 
     Usage:
         crawler = SiteCrawler(max_pages=20, max_depth=3)
@@ -95,12 +158,15 @@ class SiteCrawler:
         max_depth: int = 3,
         respect_robots: bool = True,
         same_domain_only: bool = True,
+        use_sitemap: bool = True,
     ) -> None:
         self._max_pages      = max_pages
         self._max_depth      = max_depth
         self._respect_robots = respect_robots
         self._same_domain    = same_domain_only
+        self._use_sitemap    = use_sitemap
         self._robots         = RobotsChecker()
+        self._sitemap        = SitemapDiscoverer()
         self._scraper        = SmartScraper()
         self._visited:  set[str] = set()
         self._queue:    list[tuple[str, int]] = []  # (url, depth)
@@ -112,13 +178,32 @@ class SiteCrawler:
 
         Respects robots.txt, stays on same domain, avoids revisiting URLs.
         Automatically uses headless browser for SPAs and Cloudflare pages.
+        Seeds the queue from sitemap.xml (if present) so pages without an
+        in-page nav path are still discovered.
         """
         parsed_start = urlparse(start_url)
         base_domain  = parsed_start.netloc
+        base_url     = f"{parsed_start.scheme}://{base_domain}"
 
         self._queue   = [(start_url, 0)]
         self._visited = set()
         pages_crawled = 0
+
+        # Seed the queue with every URL the sitemap declares, at depth 1
+        # so they're still subject to max_depth but don't require an
+        # in-page link to be discoverable.
+        if self._use_sitemap:
+            sitemap_urls = await self._sitemap.discover(base_url)
+            seen_seed = {start_url.split("#")[0].rstrip("/")}
+            for loc in sitemap_urls:
+                norm = loc.split("#")[0].rstrip("/")
+                if norm in seen_seed:
+                    continue
+                parsed_loc = urlparse(loc)
+                if self._same_domain and parsed_loc.netloc != base_domain:
+                    continue
+                seen_seed.add(norm)
+                self._queue.append((norm, 1))
 
         while self._queue and pages_crawled < self._max_pages:
             url, depth = self._queue.pop(0)
@@ -126,6 +211,9 @@ class SiteCrawler:
             if url in self._visited:
                 continue
             if depth > self._max_depth:
+                continue
+            _path = urlparse(url).path.lower()
+            if any(x in _path for x in ("login", "register", "signup", "sign-up", "forgot", "dashboard", "expenses", "budgets", "categories", "account", "admin", "logout", "reset")):
                 continue
 
             # Normalise URL

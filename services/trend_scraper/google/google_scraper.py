@@ -24,7 +24,7 @@ settings = get_settings()
 GOOGLE_SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
 
 # Countries to rotate through for global coverage
-GEO_TARGETS = ["us", "gb", "ca", "au", "in", "de", "fr", "jp", "br", "za", "ng", "ae", "sg"]
+GEO_TARGETS = ["gb"]
 
 
 class GoogleScraper:

@@ -41,7 +41,7 @@ BING_API_URL     = "https://api.bing.microsoft.com/v7.0/search"
 SCRAPERAPI_BASE  = "http://api.scraperapi.com"
 
 # Countries to rotate for global coverage
-GEO_TARGETS = ["us", "gb", "ca", "au", "in", "de", "fr", "jp", "br", "za", "ng", "ae", "sg"]
+GEO_TARGETS = ["gb"]
 
 
 class BingScraper:

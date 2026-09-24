@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.gap_detection.analyzer import GapAnalysisResult
 from services.gap_detection.content_clusters import ContentClusterBuilder
+from services.gap_detection.guards import is_blocked
 from configs.constants import GapSeverity
 
 logger = structlog.get_logger(__name__)
@@ -53,6 +54,8 @@ class GapOptimiser:
             "severity":    result.severity,
             "actions":     [],
         }
+
+        result.missing_topics = [t for t in result.missing_topics if not is_blocked(t)]
 
         # ── Step 1: Always build the closure plan, regardless of severity ──────
         if result.missing_topics:
@@ -243,7 +246,7 @@ class GapOptimiser:
                 SET metadata = jsonb_set(
                     COALESCE(metadata, '{}'),
                     '{expansion_priority}',
-                    :priority::jsonb
+                    CAST(:priority AS jsonb)
                 )
                 WHERE id = :doc_id AND tenant_id = :tenant_id
             """),

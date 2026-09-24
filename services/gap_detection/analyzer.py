@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from configs.constants import GapSeverity, GAP_SCORE_THRESHOLDS
 from configs.settings import get_settings
 from services.semantic_engine.comparator import SemanticComparator
+from services.gap_detection.guards import load_niche_keywords, document_has_enough_content, allow_pattern, blocked_pattern
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -76,8 +77,13 @@ class GapAnalyzer:
         from configs.security import set_tenant_context_sql
         await self._session.execute(text(set_tenant_context_sql(tenant_id)))
 
+        keywords = await load_niche_keywords(self._session, tenant_id)
+        if not keywords or not await document_has_enough_content(self._session, document_id, tenant_id):
+            logger.info("gap_analysis_skipped", document_id=document_id)
+            return self._empty_result(document_id, tenant_id)
+
         doc_vectors, doc_texts = await self._load_document_vectors(document_id, tenant_id)
-        trend_vectors, trend_data = await self._load_trend_vectors(days=trend_days)
+        trend_vectors, trend_data = await self._load_trend_vectors(days=trend_days, keywords=keywords)
 
         if not doc_vectors:
             logger.warning("gap_analysis_no_doc_vectors", document_id=document_id)
@@ -136,7 +142,7 @@ class GapAnalyzer:
     ) -> tuple[list[list[float]], list[str]]:
         result = await self._session.execute(
             text("""
-                SELECT e.embedding, c.text
+                SELECT COALESCE(e.embedding_768, e.embedding_1536, e.embedding_1024)::text AS embedding, c.text
                 FROM embeddings e
                 JOIN chunks c ON c.id = e.chunk_id
                 WHERE e.document_id = :doc_id AND e.tenant_id = :tenant_id
@@ -145,11 +151,11 @@ class GapAnalyzer:
             {"doc_id": document_id, "tenant_id": tenant_id},
         )
         rows = result.fetchall()
-        vectors = [list(row.embedding) for row in rows]
+        vectors = [json.loads(row.embedding) if isinstance(row.embedding, str) else list(row.embedding) for row in rows]
         texts = [row.text for row in rows]
         return vectors, texts
 
-    async def _load_trend_vectors(self, days: int = 7) -> tuple[list[list[float]], list[dict]]:
+    async def _load_trend_vectors(self, days: int = 7, keywords=None) -> tuple[list[list[float]], list[dict]]:
         from configs.settings import get_settings as _get_settings
         _dims = _get_settings().embedding_dimension
         _col = f"embedding_{_dims}"
@@ -159,12 +165,15 @@ class GapAnalyzer:
                 FROM scraped_trends
                 WHERE {_col} IS NOT NULL
                   AND scraped_at >= NOW() - INTERVAL '{days} days'
+                  AND (COALESCE(title,'') || ' ' || COALESCE(query,'')) ~* :allow
+                  AND (COALESCE(title,'') || ' ' || COALESCE(query,'')) !~* :block
                 ORDER BY scraped_at DESC
                 LIMIT 200
-            """)
+            """),
+            {"allow": allow_pattern(keywords or ["__none__"]), "block": blocked_pattern()},
         )
         rows = result.fetchall()
-        vectors = [list(row.embedding) for row in rows]
+        vectors = [json.loads(row.embedding) if isinstance(row.embedding, str) else list(row.embedding) for row in rows]
         data = [{"id": row.id, "title": row.title, "query": row.query} for row in rows]
         return vectors, data
 
@@ -173,11 +182,11 @@ class GapAnalyzer:
             text("""
                 INSERT INTO gap_analysis_results
                     (document_id, tenant_id, gap_score, severity,
-                     missing_topics, recommendations, reference_doc_ids,
+                     missing_topics, recommendations,
                      before_coverage, metadata)
                 VALUES
                     (:document_id, :tenant_id, :gap_score, :severity,
-                     :missing_topics, :recommendations, :reference_ids,
+                     :missing_topics, :recommendations,
                      :before_coverage, cast(:metadata as jsonb))
             """),
             {
@@ -187,7 +196,7 @@ class GapAnalyzer:
                 "severity":      result.severity,
                 "missing_topics": result.missing_topics,
                 "recommendations": result.recommendations,
-                "reference_ids": result.reference_trend_ids,
+
                 "before_coverage": result.before_coverage,
                 "metadata":      json.dumps({"covered_topics": result.covered_topics}),
             },
