@@ -101,7 +101,7 @@ def inject_drafts_for_tenant(self, tenant_id: str) -> dict:
                     FROM gap_content_drafts d
                     JOIN documents doc ON doc.id = d.document_id
                     WHERE d.tenant_id = :tid
-                      AND d.status = 'approved' AND d.publish_at IS NOT NULL AND d.publish_at <= NOW()
+                      AND d.status = 'approved'
                     ORDER BY d.quality_score DESC NULLS LAST,
                              d.composite_score DESC NULLS LAST
                     LIMIT 20
@@ -317,7 +317,7 @@ def inject_drafts_batch(self) -> dict:
                     SELECT DISTINCT d.tenant_id
                     FROM gap_content_drafts d
                     JOIN tenants t ON t.id = d.tenant_id
-                    WHERE d.status = 'approved' AND d.publish_at IS NOT NULL AND d.publish_at <= NOW()
+                    WHERE d.status = 'approved'
                       AND t.injection_status = 'live'
                       AND t.is_active       = TRUE
                       AND t.injection_credentials IS NOT NULL

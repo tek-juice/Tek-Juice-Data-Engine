@@ -119,18 +119,6 @@ class FeaturedSnippetOptimiser:
             page_level_recommendations=recs,
         )
 
-    @staticmethod
-    def _split_into_blocks(content: str) -> list[str]:
-        """
-        Split content into candidate blocks: paragraphs and list/step sections.
-
-        Blocks are separated by blank lines (the standard paragraph/section
-        boundary in plaintext and markdown-style content).
-        """
-        normalised = content.replace("\r\n", "\n")
-        raw_blocks = re.split(r'\n\s*\n', normalised.strip())
-        return [b.strip() for b in raw_blocks if b.strip()]
-
     def _score_block(self, block: str) -> SnippetCandidate:
         """Score a single content block for snippet potential."""
         snippet_type = self._classify_type(block)

@@ -117,25 +117,6 @@ class TrendScraperScheduler:
                 logger.warning("scraper_query_failed", source=source, query=query, error=str(exc))
         return count
 
-    @staticmethod
-    def _parse_published_at(value):
-        """
-        Convert a published_at value (ISO string, datetime, or None) into a
-        real datetime.datetime for the database driver. Returns None if the
-        value is missing or cannot be parsed, rather than raising, so one bad
-        date does not fail the whole insert.
-        """
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return value
-        if isinstance(value, str):
-            try:
-                return datetime.fromisoformat(value)
-            except ValueError:
-                return None
-        return None
-
     async def _persist(self, source: str, query: str, items: list[dict]) -> None:
         """Persist scraped items to the scraped_trends table."""
         if not items:
@@ -162,7 +143,7 @@ class TrendScraperScheduler:
                         "title":           item.get("title"),
                         "url":             item.get("url"),
                         "snippet":         item.get("snippet"),
-                        "published_at":    self._parse_published_at(item.get("published_at")),
+                        "published_at":    item.get("published_at"),
                         "raw_content":     item.get("raw_content"),
                         "relevance_score": item.get("relevance_score", 1.0),
                         "metadata":        json.dumps(item.get("metadata", {})),
