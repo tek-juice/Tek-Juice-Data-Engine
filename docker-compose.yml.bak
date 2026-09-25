@@ -16,7 +16,6 @@ x-docker-env: &docker-env
   POSTGRES_PORT: 5432
   REDIS_HOST: redis
   REDIS_PORT: 6379
-  SEARXNG_URL: http://searxng:8080
   CELERY_BROKER_URL: redis://redis:6379/0
   CELERY_RESULT_BACKEND: redis://redis:6379/1
   # CORS: allow the frontend origin in all environments.
@@ -534,15 +533,5 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - prometheus
-    networks:
-      - data_engine_net
-
-  # ── SearXNG (free SERP source, replaces DataForSEO) ──
-  searxng:
-    image: searxng/searxng:latest
-    container_name: data_engine_searxng
-    restart: unless-stopped
-    volumes:
-      - ./searxng:/etc/searxng
     networks:
       - data_engine_net

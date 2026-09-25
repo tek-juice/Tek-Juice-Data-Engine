@@ -81,8 +81,10 @@ register_exception_handlers(app)
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health_router)
 app.include_router(auth_router,    prefix=f"{API_PREFIX}/auth")
-app.include_router(proxy_router,   prefix=API_PREFIX)
-# ── Self-service onboarding (no auth required) ────────────────────────────────
+# ── Self-service onboarding (no auth required) — must be registered BEFORE
+# proxy_router, since proxy_router's catch-all /{service}/{path:path} would
+# otherwise swallow /api/v1/onboard/* first ────────────────────────────────
 if _has_onboard and onboard_router is not None:
-    app.include_router(onboard_router)
+    app.include_router(onboard_router, prefix=API_PREFIX)
+app.include_router(proxy_router,   prefix=API_PREFIX)
 app.include_router(sdk_router)

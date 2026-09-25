@@ -210,7 +210,7 @@ async def analyze_geo(request: GEORequest = Body(...)):
             context_richness=0.0,
             target_models=request.target_models,
         )
-        result = GEOResult(
+        return GEOResult(
             llm_visibility_score=visibility.overall_score,
             entity_coverage=visibility.entity_coverage_score,
             citation_readiness=citation_result.overall_score >= 50.0,
@@ -219,51 +219,9 @@ async def analyze_geo(request: GEORequest = Body(...)):
             recommendations=citation_result.recommendations,
             optimised_content=None,
         )
-        await _persist_geo(request, result)
-        return result
     except Exception as exc:
         logger.error("geo_analysis_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc))
-
-
-async def _persist_geo(request, result) -> None:
-    """Persist GEO results to the geo_optimisation_results table."""
-    try:
-        from configs.database import AsyncSessionLocal
-        from sqlalchemy import text
-        import json
-
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                text("""
-                    INSERT INTO geo_optimisation_results (
-                        document_id, tenant_id,
-                        llm_visibility_score, entity_coverage,
-                        citation_readiness, context_richness_score,
-                        optimised_content, target_models, recommendations, metadata
-                    ) VALUES (
-                        :doc_id, :tenant_id,
-                        :visibility, :coverage,
-                        :citation_ready, :richness,
-                        :optimised, :targets, :recs, :meta
-                    )
-                """),
-                {
-                    "doc_id": str(request.document_id),
-                    "tenant_id": str(request.tenant_id),
-                    "visibility": result.llm_visibility_score,
-                    "coverage": result.entity_coverage,
-                    "citation_ready": result.citation_readiness,
-                    "richness": result.context_richness_score,
-                    "optimised": result.optimised_content,
-                    "targets": request.target_models or [],
-                    "recs": result.recommendations,
-                    "meta": json.dumps({}),
-                },
-            )
-            await session.commit()
-    except Exception as exc:
-        logger.error("geo_persist_failed", error=str(exc))
 
 
 @app.get("/health", tags=["health"], summary="Health check")

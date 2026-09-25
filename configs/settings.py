@@ -188,8 +188,15 @@ class Settings(BaseSettings):
     # Maximum tokens the writing agent may generate per content section.
     llm_writing_max_tokens: int = 1200
 
-    # ── DataForSEO — SERP Rank Tracking & Backlink Authority
+    # ── Search / SERP Provider
+    # Internal SearXNG endpoint used for keyword visibility/rank tracking.
+    # Docker Compose overrides this to http://searxng:8080.
+    searxng_url: str = "http://localhost:8080"
+
+    # ── DataForSEO — Backlink Authority
     # Credentials: https://app.dataforseo.com/api-dashboard
+    # Retained for domain authority/backlink tracking; SERP rank tracking
+    # uses SearXNG above.
     dataforseo_login: str = ""
     dataforseo_password: str = ""
     # Rank tracking: how often to refresh keyword rankings (seconds)

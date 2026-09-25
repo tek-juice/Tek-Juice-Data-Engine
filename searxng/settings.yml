@@ -1,0 +1,19 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Tek Juice Search"
+
+server:
+  secret_key: "0d4f2794897a84896182f1c95be05ce80f5963b5af4a6c91643dd5d19042072a"
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
+
+botdetection:
+  trusted_proxies:
+    - 192.168.32.0/20

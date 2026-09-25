@@ -1,46 +1,62 @@
 """
 DATA ENGINE — Celery SEO Intelligence Tasks
-Scheduled rank tracking and domain authority monitoring.
+
+Scheduled SearXNG rank tracking and domain search-visibility monitoring.
 """
 
 import asyncio
+
 import structlog
 from celery import shared_task
 
 logger = structlog.get_logger(__name__)
 
 
-@shared_task(name="tasks.track_keyword_rankings", bind=True, max_retries=2, default_retry_delay=60)
+@shared_task(
+    name="tasks.track_keyword_rankings",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
 def track_keyword_rankings(self) -> dict:
     """
     Scheduled: fetch current SERP rankings for all tracked keywords.
-    Reads tracked keywords from the rank_tracking_config table and
-    dispatches DataForSEO API calls for each domain/keyword/location.
+
+    Reads active tracked queries from rank_tracking_config and dispatches
+    SearXNG searches for each tenant/domain/keyword combination.
     """
+
     async def _run():
         from configs.database import AsyncSessionLocal
         from configs.settings import get_settings
         from services.seo_engine.rank_tracker import RankTracker
         from sqlalchemy import text
 
-        _settings = get_settings()
+        settings = get_settings()
+
         tracker = RankTracker(
-            api_login=_settings.dataforseo_login,
-            api_password=_settings.dataforseo_password,
+            searxng_url=settings.searxng_url,
         )
 
-        # Load all active tracked keywords
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text("""
-                    SELECT domain, keyword, location_code
+                text(
+                    """
+                    SELECT tenant_id, domain, keyword, language
                     FROM rank_tracking_config
                     WHERE is_active = TRUE
                     LIMIT 500
-                """)
+                    """
+                )
             )
+
             items = [
-                {"domain": r.domain, "keyword": r.keyword, "location_code": r.location_code}
+                {
+                    "tenant_id": r.tenant_id,
+                    "domain": r.domain,
+                    "keyword": r.keyword,
+                    "language": r.language,
+                }
                 for r in result.fetchall()
             ]
 
@@ -49,7 +65,9 @@ def track_keyword_rankings(self) -> dict:
             return {"tracked": 0}
 
         result_data = await tracker.track_batch(items)
-        persisted   = await tracker.persist(result_data.snapshots)
+
+        # Each RankSnapshot carries its originating tenant_id.
+        persisted = await tracker.persist(result_data.snapshots)
 
         logger.info(
             "rank_tracking_complete",
@@ -58,11 +76,12 @@ def track_keyword_rankings(self) -> dict:
             persisted=persisted,
             errors=result_data.errors,
         )
+
         return {
-            "tracked":    result_data.tracked,
+            "tracked": result_data.tracked,
             "not_ranked": result_data.not_ranked,
-            "persisted":  persisted,
-            "errors":     result_data.errors,
+            "persisted": persisted,
+            "errors": result_data.errors,
         }
 
     try:
@@ -72,52 +91,120 @@ def track_keyword_rankings(self) -> dict:
         raise self.retry(exc=exc)
 
 
-@shared_task(name="tasks.track_domain_authority", bind=True, max_retries=2, default_retry_delay=60)
-def track_domain_authority(self) -> dict:
+@shared_task(
+    name="tasks.track_domain_visibility",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def track_domain_visibility(self) -> dict:
     """
-    Scheduled (daily): fetch domain authority and backlink metrics for all
-    tracked domains and persist daily snapshots.
+    Scheduled (daily): measure search visibility for all tracked domains.
+
+    Each domain is evaluated against its active tracked queries using
+    SearXNG. The resulting metrics are stored in domain_visibility.
+
+    This measures search visibility, not backlink authority.
     """
+
     async def _run():
+        from collections import defaultdict
+
         from configs.database import AsyncSessionLocal
         from configs.settings import get_settings
         from services.seo_engine.authority import AuthorityTracker
         from sqlalchemy import text
 
-        _settings = get_settings()
+        settings = get_settings()
+
         tracker = AuthorityTracker(
-            api_login=_settings.dataforseo_login,
-            api_password=_settings.dataforseo_password,
+            searxng_url=settings.searxng_url,
         )
 
-        # Load all unique domains from rank_tracking_config
+        # Build tenant -> domain -> tracked queries.
+        tenant_domains: dict[str, dict[str, list[str]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                text("SELECT DISTINCT domain FROM rank_tracking_config WHERE is_active = TRUE")
+                text(
+                    """
+                    SELECT tenant_id, domain, keyword
+                    FROM rank_tracking_config
+                    WHERE is_active = TRUE
+                    ORDER BY tenant_id, domain, keyword
+                    LIMIT 5000
+                    """
+                )
             )
-            domains = [r.domain for r in result.fetchall()]
 
-        if not domains:
-            logger.info("authority_tracking_no_domains_configured")
-            return {"fetched": 0}
+            rows = result.fetchall()
 
-        result_data = await tracker.fetch_batch(domains)
-        persisted   = await tracker.persist(result_data.snapshots)
+        for row in rows:
+            tenant_id = str(row.tenant_id)
+            tenant_domains[tenant_id][row.domain].append(row.keyword)
+
+        if not tenant_domains:
+            logger.info("domain_visibility_no_queries_configured")
+            return {
+                "domains": 0,
+                "queries": 0,
+                "persisted": 0,
+            }
+
+        total_domains = 0
+        total_queries = 0
+        total_persisted = 0
+        total_errors = 0
+
+        for tenant_id, domain_queries in tenant_domains.items():
+            total_domains += len(domain_queries)
+            total_queries += sum(
+                len(queries)
+                for queries in domain_queries.values()
+            )
+
+            # AuthorityTracker now expects tenant-aware domain/query groups.
+            result_data = await tracker.fetch_batch({
+                tenant_id: domain_queries,
+            })
+
+            persisted = await tracker.persist(result_data.snapshots)
+
+            total_persisted += persisted
+            total_errors += result_data.errors
+
+            logger.info(
+                "domain_visibility_tenant_complete",
+                tenant_id=tenant_id,
+                domains=len(domain_queries),
+                queries=sum(
+                    len(queries)
+                    for queries in domain_queries.values()
+                ),
+                fetched=result_data.fetched,
+                persisted=persisted,
+                errors=result_data.errors,
+            )
 
         logger.info(
-            "authority_tracking_complete",
-            fetched=result_data.fetched,
-            persisted=persisted,
-            errors=result_data.errors,
+            "domain_visibility_complete",
+            domains=total_domains,
+            queries=total_queries,
+            persisted=total_persisted,
+            errors=total_errors,
         )
+
         return {
-            "fetched":   result_data.fetched,
-            "persisted": persisted,
-            "errors":    result_data.errors,
+            "domains": total_domains,
+            "queries": total_queries,
+            "persisted": total_persisted,
+            "errors": total_errors,
         }
 
     try:
         return asyncio.run(_run())
     except Exception as exc:
-        logger.error("authority_tracking_task_failed", error=str(exc))
+        logger.error("domain_visibility_task_failed", error=str(exc))
         raise self.retry(exc=exc)

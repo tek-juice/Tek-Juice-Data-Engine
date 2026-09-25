@@ -1,124 +1,136 @@
 """
-DATA ENGINE — SERP Rank Tracker
-Fetches current organic search rankings for tracked keywords via the
-DataForSEO SERP API and persists daily snapshots to the rank_tracking
-table.
+DATA ENGINE — SearXNG SERP Rank Tracker
 
-DataForSEO docs: https://docs.dataforseo.com/v3/serp/google/organic/
-One API call returns the top-100 organic results for a keyword + location.
-The tracker records the first position at which the target domain appears.
+Fetches current organic search rankings from the internal SearXNG instance
+and persists daily ranking snapshots.
 
-Usage in a Celery task — call RankTracker.track_batch() with a list of
-(domain, keyword, location_code) tuples; results are stored to DB.
+SearXNG is the sole SERP provider. No paid SEO/SERP provider is required.
 """
 
 import asyncio
-import re
+import json
 from dataclasses import dataclass, field
 from datetime import date
+from urllib.parse import urlparse
 
 import httpx
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-DATAFORSEO_API_URL = "https://api.dataforseo.com/v3/serp/google/organic/live/regular"
-DATAFORSEO_TIMEOUT = 30.0
-DATAFORSEO_MAX_CONCURRENT = 5
+SEARXNG_TIMEOUT = 30.0
+SEARXNG_MAX_CONCURRENT = 5
+SEARXNG_MAX_RESULTS = 20
 
 
 @dataclass
 class RankSnapshot:
     """A single keyword ranking snapshot."""
+
+    tenant_id: str
     domain: str
     keyword: str
-    location_code: int          # DataForSEO location code, e.g. 2840 = USA
-    position: int | None        # 1-indexed; None = not in top-100
-    url: str | None             # Ranking URL found in SERP
-    search_volume: int | None   # Monthly search volume if returned
-    cpc: float | None           # Cost-per-click estimate
-    competition: float | None   # Competition index 0.0–1.0
+    language: str
+    position: int | None
+    url: str | None
+    title: str | None
+    snippet: str | None
+    engines: list[str] = field(default_factory=list)
+    score: float | None = None
+    rank_found: bool = False
+    results_checked: int = 0
     snapshot_date: date = field(default_factory=date.today)
     raw_serp_item: dict = field(default_factory=dict)
 
 
 @dataclass
 class RankTrackingResult:
-    """Results for a batch tracking run."""
+    """Results from a batch of SearXNG rank checks."""
+
     snapshots: list[RankSnapshot]
     tracked: int
-    not_ranked: int             # keywords where domain was not in top-100
+    not_ranked: int
     errors: int
     api_calls_used: int
 
 
 class RankTracker:
-    """
-    Fetches SERP rankings from DataForSEO and persists snapshots.
+    """Track domain rankings through the internal SearXNG instance."""
 
-    Supports:
-    - Google organic rankings (top 100)
-    - Position tracking per domain + keyword + location
-    - Daily snapshots with historical trend storage
-    - Graceful degradation if API key is missing
-    """
+    def __init__(self, searxng_url: str = "http://localhost:8080") -> None:
+        self._base_url = searxng_url.rstrip("/")
+        self._enabled = bool(searxng_url)
 
-    def __init__(self, api_login: str = "", api_password: str = "") -> None:
-        self._login    = api_login
-        self._password = api_password
-        self._enabled  = bool(api_login and api_password)
         if not self._enabled:
             logger.warning(
                 "rank_tracker_disabled",
-                reason="DATAFORSEO_LOGIN or DATAFORSEO_PASSWORD not set",
+                reason="SEARXNG_URL is not configured",
             )
-
-    # ── Public API ───────────────────────────────────────────────────────────
 
     async def track_batch(
         self,
-        items: list[dict],  # [{"domain": ..., "keyword": ..., "location_code": ...}]
+        items: list[dict],
     ) -> RankTrackingResult:
         """
-        Fetch current rankings for a list of (domain, keyword, location) items.
+        Fetch rankings for:
 
-        Args:
-            items: List of dicts with keys: domain, keyword, location_code.
-
-        Returns:
-            RankTrackingResult with all snapshots.
+        {
+            "tenant_id": "...",
+            "domain": "example.com",
+            "keyword": "example search query",
+            "language": "en"
+        }
         """
-        if not self._enabled:
+
+        if not self._enabled or not items:
             return RankTrackingResult(
-                snapshots=[], tracked=0, not_ranked=0, errors=0, api_calls_used=0
+                snapshots=[],
+                tracked=0,
+                not_ranked=0,
+                errors=0,
+                api_calls_used=0,
             )
 
-        sem = asyncio.Semaphore(DATAFORSEO_MAX_CONCURRENT)
-        async with httpx.AsyncClient(
-            auth=(self._login, self._password),
-            timeout=DATAFORSEO_TIMEOUT,
-        ) as client:
-            tasks = [self._fetch_rank(client, sem, item) for item in items]
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        sem = asyncio.Semaphore(SEARXNG_MAX_CONCURRENT)
+
+        async with httpx.AsyncClient(timeout=SEARXNG_TIMEOUT) as client:
+            tasks = [
+                self._fetch_rank(
+                    client=client,
+                    sem=sem,
+                    item=item,
+                )
+                for item in items
+            ]
+
+            results = await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
 
         snapshots: list[RankSnapshot] = []
         errors = 0
-        for result in raw_results:
+        not_ranked = 0
+
+        for result in results:
             if isinstance(result, Exception):
                 errors += 1
-                logger.warning("rank_fetch_failed", error=str(result))
-            elif result is not None:
-                snapshots.append(result)
+                logger.warning(
+                    "rank_fetch_batch_error",
+                    error=str(result),
+                )
+                continue
 
-        not_ranked = sum(1 for s in snapshots if s.position is None)
+            if result is None:
+                errors += 1
+                continue
 
-        logger.info(
-            "rank_tracking_batch_complete",
-            total=len(items),
-            ranked=len(snapshots) - not_ranked,
-            not_ranked=not_ranked,
-            errors=errors,
-        )
+            snapshots.append(result)
+
+            if result.rank_found:
+                continue
+
+            not_ranked += 1
 
         return RankTrackingResult(
             snapshots=snapshots,
@@ -128,16 +140,12 @@ class RankTracker:
             api_calls_used=len(items) - errors,
         )
 
-    async def persist(self, snapshots: list[RankSnapshot]) -> int:
-        """
-        Persist rank snapshots to the rank_tracking table.
+    async def persist(
+        self,
+        snapshots: list[RankSnapshot],
+    ) -> int:
+        """Persist ranking snapshots to the rank_tracking table."""
 
-        Args:
-            snapshots: List of RankSnapshot objects.
-
-        Returns:
-            Number of rows inserted.
-        """
         if not snapshots:
             return 0
 
@@ -145,42 +153,86 @@ class RankTracker:
         from sqlalchemy import text
 
         inserted = 0
+
         async with AsyncSessionLocal() as session:
-            for snap in snapshots:
+            for snapshot in snapshots:
                 await session.execute(
-                    text("""
-                        INSERT INTO rank_tracking
-                            (domain, keyword, location_code, position, ranking_url,
-                             search_volume, cpc, competition, snapshot_date, raw_data)
-                        VALUES
-                            (:domain, :keyword, :location_code, :position, :url,
-                             :sv, :cpc, :comp, :snap_date, :raw)
-                        ON CONFLICT (domain, keyword, location_code, snapshot_date)
+                    text(
+                        """
+                        INSERT INTO rank_tracking (
+                            tenant_id,
+                            domain,
+                            keyword,
+                            language,
+                            position,
+                            ranking_url,
+                            title,
+                            snippet,
+                            engines,
+                            score,
+                            rank_found,
+                            results_checked,
+                            snapshot_date,
+                            raw_data
+                        )
+                        VALUES (
+                            :tenant_id,
+                            :domain,
+                            :keyword,
+                            :language,
+                            :position,
+                            :url,
+                            :title,
+                            :snippet,
+                            :engines,
+                            :score,
+                            :rank_found,
+                            :results_checked,
+                            :snapshot_date,
+                            CAST(:raw_data AS jsonb)
+                        )
+                        ON CONFLICT (
+                            tenant_id,
+                            domain,
+                            keyword,
+                            language,
+                            snapshot_date
+                        )
                         DO UPDATE SET
-                            position    = EXCLUDED.position,
+                            position = EXCLUDED.position,
                             ranking_url = EXCLUDED.ranking_url,
-                            raw_data    = EXCLUDED.raw_data
-                    """),
+                            title = EXCLUDED.title,
+                            snippet = EXCLUDED.snippet,
+                            engines = EXCLUDED.engines,
+                            score = EXCLUDED.score,
+                            rank_found = EXCLUDED.rank_found,
+                            results_checked = EXCLUDED.results_checked,
+                            raw_data = EXCLUDED.raw_data
+                        """
+                    ),
                     {
-                        "domain":        snap.domain,
-                        "keyword":       snap.keyword,
-                        "location_code": snap.location_code,
-                        "position":      snap.position,
-                        "url":           snap.url,
-                        "sv":            snap.search_volume,
-                        "cpc":           snap.cpc,
-                        "comp":          snap.competition,
-                        "snap_date":     snap.snapshot_date,
-                        "raw":           __import__("json").dumps(snap.raw_serp_item),
+                        "tenant_id": snapshot.tenant_id,
+                        "domain": snapshot.domain,
+                        "keyword": snapshot.keyword,
+                        "language": snapshot.language,
+                        "position": snapshot.position,
+                        "url": snapshot.url,
+                        "title": snapshot.title,
+                        "snippet": snapshot.snippet,
+                        "engines": snapshot.engines,
+                        "score": snapshot.score,
+                        "rank_found": snapshot.rank_found,
+                        "results_checked": snapshot.results_checked,
+                        "snapshot_date": snapshot.snapshot_date,
+                        "raw_data": json.dumps(snapshot.raw_serp_item),
                     },
                 )
+
                 inserted += 1
+
             await session.commit()
 
-        logger.info("rank_snapshots_persisted", count=inserted)
         return inserted
-
-    # ── Internal ─────────────────────────────────────────────────────────────
 
     async def _fetch_rank(
         self,
@@ -188,75 +240,103 @@ class RankTracker:
         sem: asyncio.Semaphore,
         item: dict,
     ) -> RankSnapshot | None:
-        """Fetch ranking position for one keyword + domain combination."""
-        domain        = item["domain"]
-        keyword       = item["keyword"]
-        location_code = int(item.get("location_code", 2840))  # default USA
+        """Fetch one keyword SERP and find the target domain."""
 
-        payload = [{
-            "keyword":       keyword,
-            "location_code": location_code,
-            "language_code": "en",
-            "device":        "desktop",
-            "depth":         100,
-        }]
+        tenant_id = str(item["tenant_id"])
+        domain = item["domain"]
+        keyword = item["keyword"]
+        language = item.get("language") or "en"
+
+        params = {
+            "q": keyword,
+            "format": "json",
+            "language": language,
+        }
 
         try:
             async with sem:
-                resp = await client.post(DATAFORSEO_API_URL, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
+                response = await client.get(
+                    f"{self._base_url}/search",
+                    params=params,
+                )
+                response.raise_for_status()
+                data = response.json()
 
-            tasks_data = (
-                data.get("tasks", [{}])[0]
-                    .get("result", [{}])[0]
-                    .get("items", [])
-            )
-            sv  = (data.get("tasks", [{}])[0]
-                       .get("result", [{}])[0]
-                       .get("keyword_data", {})
-                       .get("keyword_info", {})
-                       .get("search_volume"))
-            cpc = (data.get("tasks", [{}])[0]
-                       .get("result", [{}])[0]
-                       .get("keyword_data", {})
-                       .get("keyword_info", {})
-                       .get("cpc"))
-            comp = (data.get("tasks", [{}])[0]
-                        .get("result", [{}])[0]
-                        .get("keyword_data", {})
-                        .get("keyword_info", {})
-                        .get("competition"))
+            results = data.get("results") or []
+            checked_results = results[:SEARXNG_MAX_RESULTS]
 
-            position: int | None = None
-            ranking_url: str | None = None
-            raw_item: dict = {}
+            position = None
+            ranking_url = None
+            title = None
+            snippet = None
+            engines: list[str] = []
+            score = None
 
-            for item_data in tasks_data:
-                if item_data.get("type") != "organic":
-                    continue
-                item_url = item_data.get("url", "")
-                if self._domain_matches(domain, item_url):
-                    position    = item_data.get("rank_absolute")
-                    ranking_url = item_url
-                    raw_item    = item_data
+            for index, result in enumerate(
+                checked_results,
+                start=1,
+            ):
+                result_url = result.get("url") or ""
+
+                if self._domain_matches(domain, result_url):
+                    position = index
+                    ranking_url = result_url
+                    title = result.get("title")
+                    snippet = result.get("content")
+                    score = result.get("score")
+
+                    raw_engines = result.get("engines")
+                    if isinstance(raw_engines, list):
+                        engines = [
+                            str(engine)
+                            for engine in raw_engines
+                        ]
+                    elif result.get("engine"):
+                        engines = [str(result["engine"])]
+
                     break
 
+            raw_data = {
+                "provider": "searxng",
+                "query": keyword,
+                "language": language,
+                "results_checked": len(checked_results),
+                "rank_found": position is not None,
+                "matched_result": {
+                    "position": position,
+                    "title": title,
+                    "url": ranking_url,
+                    "content": snippet,
+                    "engines": engines,
+                    "score": score,
+                },
+                "result_urls": [
+                    result.get("url")
+                    for result in checked_results
+                    if result.get("url")
+                ],
+            }
+
             return RankSnapshot(
+                tenant_id=tenant_id,
                 domain=domain,
                 keyword=keyword,
-                location_code=location_code,
+                language=language,
                 position=position,
                 url=ranking_url,
-                search_volume=sv,
-                cpc=cpc,
-                competition=comp,
-                raw_serp_item=raw_item,
+                title=title,
+                snippet=snippet,
+                engines=engines,
+                score=score,
+                rank_found=position is not None,
+                results_checked=len(checked_results),
+                raw_serp_item=raw_data,
             )
 
         except Exception as exc:
             logger.warning(
                 "rank_fetch_error",
+                tenant_id=tenant_id,
                 domain=domain,
                 keyword=keyword,
                 error=str(exc),
@@ -265,7 +345,24 @@ class RankTracker:
 
     @staticmethod
     def _domain_matches(domain: str, url: str) -> bool:
-        """Check whether a SERP result URL belongs to the tracked domain."""
-        domain_clean = re.sub(r'^https?://(www\.)?', '', domain).rstrip("/")
-        url_clean    = re.sub(r'^https?://(www\.)?', '', url).rstrip("/")
-        return url_clean.startswith(domain_clean)
+        """Safely match a target domain against a result URL."""
+
+        target = domain.strip().lower()
+
+        if target.startswith("www."):
+            target = target[4:]
+
+        try:
+            hostname = urlparse(url).hostname or ""
+        except ValueError:
+            return False
+
+        hostname = hostname.lower()
+
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+
+        return (
+            hostname == target
+            or hostname.endswith("." + target)
+        )

@@ -12,6 +12,7 @@ COPY shared/ ./shared/
 COPY services/__init__.py ./services/__init__.py
 COPY services/api_gateway/ ./services/api_gateway/
 COPY services/synchronization/ ./services/synchronization/
+COPY services/onboarding/ ./services/onboarding/
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 USER appuser

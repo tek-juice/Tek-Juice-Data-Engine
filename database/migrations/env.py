@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from configs.database import Base
 from configs.settings import get_settings
+from urllib.parse import quote_plus
 
 # Alembic Config object — provides access to the .ini file values
 config = context.config
@@ -21,7 +22,7 @@ settings = get_settings()
 # Override sqlalchemy.url from settings (avoids hardcoding in alembic.ini)
 # Use async URL (postgresql+asyncpg://) because the online migration runner
 # uses async_engine_from_config — psycopg2 (sync) is not accepted.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+config.set_main_option("sqlalchemy.url", f"postgresql+asyncpg://{settings.postgres_user}:{quote_plus(settings.postgres_password)}@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}?ssl=disable&prepared_statement_cache_size=0".replace("%", "%%"))
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:

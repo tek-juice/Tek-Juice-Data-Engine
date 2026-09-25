@@ -137,6 +137,26 @@ def chunk_document(self, document_id: str, tenant_id: str) -> dict:
 
 # ── Automated Website Crawl & Ingest ─────────────────────────────────────────
 
+async def _analyse_page(document_id: str, tenant_id: str, content: str) -> None:
+    """Fire SEO/GEO/AEO analysis for a freshly ingested page. Best-effort — never blocks ingestion."""
+    import httpx
+
+    payload = {"document_id": document_id, "tenant_id": tenant_id, "content": content}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for service, port, path in [
+            ("seo_engine", 8012, "/api/v1/seo/analyze"),
+            ("geo_engine", 8013, "/api/v1/geo/analyze"),
+            ("aeo_engine", 8014, "/api/v1/aeo/analyze"),
+        ]:
+            try:
+                resp = await client.post(f"http://{service}:{port}{path}", json=payload)
+                resp.raise_for_status()
+                logger.info("page_analysed", service=service, document_id=document_id)
+            except Exception as exc:
+                logger.warning("page_analysis_failed", service=service, document_id=document_id, error=str(exc))
+
+
 @shared_task(
     name="tasks.crawl_and_ingest_website",
     bind=True,
@@ -249,6 +269,9 @@ def crawl_and_ingest_website(self, tenant_id: str) -> dict:
                 )
                 ingested += 1
                 logger.info("page_ingested", tenant_id=tenant_id, url=page.url, doc_id=doc_id)
+
+                # Trigger SEO/GEO/AEO analysis on the freshly ingested page content
+                await _analyse_page(doc_id, tenant_id, page.text)
 
             except Exception as exc:
                 failed += 1
